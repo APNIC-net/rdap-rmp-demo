@@ -1,0 +1,8 @@
+{ "rdapConformance": [ "rdap_level_0" ],
+  "objectClassName": "ip network",
+  "handle": "RFC 1918 network",
+  "ipVersion": "v4",
+  "startAddress": "10.0.0.0",
+  "endAddress": "10.255.255.255",
+  "links": [ { "rel": "self",
+               "href": "https://example.com/ip/10.0.0.0/8" } ] }

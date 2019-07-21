@@ -66,6 +66,8 @@ my $pid;
     ok($res, 'Saved server DB successfully');
 
     if (not ($pid = fork())) {
+        local(*STDERR);
+        open(STDERR, ">/dev/null");
         $server->run();
         exit();
     }

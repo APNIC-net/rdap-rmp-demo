@@ -79,6 +79,8 @@ sub _snapshot_generate
 {
     my ($self) = @_;
 
+    warn "Generating snapshot...\n";
+
     my ($url_base, $object_path, $data_path, $defaults, $key) =
         @{$self}{qw(url_base object_path data_path defaults key)};
 
@@ -97,6 +99,7 @@ sub _snapshot_generate
         my $object_data = decode_json($content);
         my $id = _get_self_link($path, $object_data);
         push @objects, { id => $id, object => $object_data };
+        warn "  Adding object to snapshot: $id\n";
 
         my $digest = md5_hex($content);
         $hashes{$path} = [ $digest, $id ];
@@ -109,6 +112,9 @@ sub _snapshot_generate
         defaults => $defaults,
         objects  => \@objects,
     );
+
+    use Data::Dumper;
+    warn "  Snapshot content: ".encode_json(\%snapshot)."\n";
 
     my $data = encode_jwt(payload => encode_json(\%snapshot),
                           key => \$key,
@@ -126,12 +132,16 @@ sub _snapshot_generate
     $db->{'snapshot_uri'} = $snapshot_uri;
     $db->{'deltas'} = [];
 
+    warn "Finished generating snapshot.\n";
+
     return HTTP::Response->new(HTTP_OK);
 }
 
 sub _unf_generate
 {
     my ($self) = @_;
+
+    warn "Generating UNF...\n";
 
     my ($url_base, $refresh, $data_path, $key) =
         @{$self}{qw(url_base refresh data_path key)};
@@ -151,6 +161,8 @@ sub _unf_generate
         deltas => $db->{'deltas'},
     );
 
+    warn "  UNF content: ".encode_json(\%unf)."\n";
+
     my $data = encode_jwt(payload => encode_json(\%unf),
                           key => \$key,
                           alg => 'ES256',
@@ -162,6 +174,8 @@ sub _unf_generate
 
     my $unf_uri = $url_base.$unf_post;
     $db->{'unf_uri'} = $unf_uri;
+
+    warn "Finished generating UNF.\n";
 
     return HTTP::Response->new(HTTP_OK);
 }
@@ -187,6 +201,8 @@ sub _get_self_link
 sub _delta_generate
 {
     my ($self) = @_;
+
+    warn "Generating delta...\n";
 
     my ($url_base, $object_path, $data_path, $defaults, $key) =
         @{$self}{qw(url_base object_path data_path defaults key)};
@@ -223,7 +239,33 @@ sub _delta_generate
                 and $hashes{$_}->[0] ne $new_hashes{$_}->[0] }
             keys %hashes;
 
+    if (@removed_ids) {
+        warn "  Removed objects:\n";
+        for my $removed_id (@removed_ids) {
+            warn "    $removed_id\n";
+        }
+    } else {
+        warn "  No objects removed.\n";
+    }
+    if (@added_paths) {
+        warn "  Added objects:\n";
+        for my $added_path (@added_paths) {
+            warn "    $added_path\n";
+        }
+    } else {
+        warn "  No objects added.\n";
+    }
+    if (@updated_paths) {
+        warn "  Updated objects:\n";
+        for my $updated_path (@updated_paths) {
+            warn "    $updated_path\n";
+        }
+    } else {
+        warn "  No objects updated.\n";
+    }
+
     if (not @removed_ids and not @added_paths and not @updated_paths) {
+        warn "No changed detected, delta generation not required.\n";
         return HTTP::Response->new(HTTP_OK);
     }
 
@@ -243,6 +285,8 @@ sub _delta_generate
         ],
     );
 
+    warn "  Delta content: ".encode_json(\%delta);
+
     my $data = encode_jwt(payload => encode_json(\%delta),
                           key => \$key,
                           alg => 'ES256',
@@ -261,6 +305,8 @@ sub _delta_generate
         uri    => $delta_uri,
         serial => $db->{'serial'}->to_string(),
     };
+
+    warn "Finished generating delta.\n";
 
     return HTTP::Response->new(HTTP_OK);
 }

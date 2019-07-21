@@ -112,6 +112,10 @@ sub _add_object
 {
     my ($self, $object) = @_;
 
+    warn "Adding object...\n";
+
+    warn "  Object: ".encode_json($object)."\n";
+
     my $id = $object->{'id'};
     if (not URI->new($id)) {
         die "Object ID must be a valid URI";
@@ -160,11 +164,19 @@ sub _add_object
     } elsif ($object_class_name eq 'entity') {
         $db->{'entities'}->{$object_data->{'handle'}} = $path;
     }
+
+    warn "Finished adding object.\n";
+
+    return 1;
 }
 
 sub _remove_object
 {
     my ($self, $id) = @_;
+
+    warn "Removing object...\n";
+
+    warn "  Object ID: $id\n";
 
     my $db = $self->{'db'};
     if (not $db->{'by_id'}->{$id}) {
@@ -202,12 +214,16 @@ sub _remove_object
     delete $db->{'id_to_link'}->{$id};
     delete $db->{'id_to_used_links'}->{$id};
 
+    warn "Finished removing object.\n";
+
     return 1;
 }
 
 sub _apply_snapshot
 {
     my ($self, $snapshot) = @_;
+
+    warn "Applying snapshot...\n";
 
     my ($key, $object_path) =
         @{$self}{qw(key object_path)};
@@ -271,12 +287,16 @@ sub _apply_snapshot
         $self->{'defaults'} = $snapshot_data->{'defaults'};
     }
 
+    warn "Finished applying snapshot.\n";
+
     return $serial;
 }
 
 sub _apply_delta
 {
     my ($self, $delta) = @_;
+
+    warn "Applying delta...\n";
 
     my $db = $self->{'db'};
     my ($key, $object_path) = @{$self}{qw(key object_path)};
@@ -353,6 +373,8 @@ sub _apply_delta
         $self->{'defaults'} = $delta_data->{'defaults'};
     }
 
+    warn "Finished applying delta.\n";
+
     return $serial;
 }
 
@@ -373,6 +395,8 @@ sub _is_sequence
 sub _refresh
 {
     my ($self) = @_;
+
+    warn "Refreshing...\n";
 
     my ($unf_url, $key, $object_path) =
         @{$self}{qw(unf_url key object_path)};
@@ -406,7 +430,13 @@ sub _refresh
         $serial = $self->_apply_snapshot($unf_data->{'snapshot'});
     }
     if (not @{$unf_data->{'deltas'}}) {
+        if ($unf_data->{'snapshot'}) {
+            if ($serial != new_serial(32, $unf_data->{'snapshot'}->{'serial'})) {
+                $serial = $self->_apply_snapshot($unf_data->{'snapshot'});
+            }
+        }
         $db->{'serial'} = $serial;
+        warn "Finished refreshing.\n";
         return HTTP::Response->new(HTTP_OK);
     }
 
@@ -438,6 +468,7 @@ sub _refresh
     my @rel_deltas = grep { $_->{'serial'} > $serial } @deltas;
     if (not @rel_deltas) {
         $db->{'serial'} = $serial;
+        warn "Finished refreshing.\n";
         return HTTP::Response->new(HTTP_OK);
     }
 
@@ -450,6 +481,7 @@ sub _refresh
         @rel_deltas = grep { $_->{'serial'} > $serial } @deltas;
         if (not @rel_deltas) {
             $db->{'serial'} = $serial;
+            warn "Finished refreshing.\n";
             return HTTP::Response->new(HTTP_OK);
         }
     }
@@ -460,6 +492,8 @@ sub _refresh
 
     my $new_serial = $rel_deltas[$#rel_deltas]->{'serial'};
     $db->{'serial'} = $new_serial;
+
+    warn "Finished refreshing.\n";
 
     return HTTP::Response->new(HTTP_OK);
 }

@@ -17,6 +17,9 @@ use APNIC::RDAP::RMP::Serial qw(new_serial);
 use Test::More tests => 35;
 
 {
+    local(*STDERR);
+    open(STDERR, '>/dev/null');
+
     my $db_path_client_ft = File::Temp->new();
     write_file($db_path_client_ft, '{}');
 

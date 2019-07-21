@@ -1,0 +1,5 @@
+{ "rdapConformance": [ "rdap_level_0" ],
+  "objectClassName": "entity",
+  "handle": "TEST-ENTITY",
+  "links": [ { "rel": "self",
+               "href": "https://example.com/entity/TEST-ENTITY" } ] }

@@ -6,6 +6,7 @@ cd /
 mkdir rdap
 cd rdap
 rdap-rmp-generate-key --public-out public.pem --private-out private.pem
+echo "Generated keypair for servers..."
 mkdir server
 cd server
 echo "{}" > db-path
@@ -14,6 +15,7 @@ cd data
 mkdir unf snapshot delta
 cd ..
 mkdir objects
+echo "Finished setting up server state..."
 rdap-rmp-server \
     --port 8080 \
     --url-base http://localhost:8080 \
@@ -22,14 +24,17 @@ rdap-rmp-server \
     --object-path /rdap/server/objects \
     --key-path /rdap/private.pem \
     --refresh 3600 > /rdap/server/server-log 2>&1 &
+echo "Server is running on port 8080..."
 cd ..
 mkdir client
 cd client
 mkdir objects
+echo "Finished setting up client state..."
 rdap-rmp-client \
     --port 8081 \
     --url-base http://localhost:8081 \
-    --object-path /rdap/clients/objects \
+    --object-path /rdap/client/objects \
     --unf-url http://localhost:8080/unf/unf.json \
     --key-path /rdap/public.pem > /rdap/client/client-log 2>&1 &
+echo "Client is running on port 8081..."
 echo "Finished test setup."

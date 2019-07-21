@@ -3,6 +3,7 @@ FROM ubuntu:18.04
 RUN apt-get update -y
 RUN apt-get install -y \
     libhttp-daemon-perl \
+    libio-capture-perl \
     libwww-perl \
     libcarp-always-perl \
     libnet-ip-perl \
@@ -12,11 +13,12 @@ RUN apt-get install -y \
     libnet-patricia-perl \
     cpanminus \
     gcc \
+    curl \
+    jq \
     make
 RUN cpanm \
     Crypt::JWT
-RUN apt-get install -y \
-    curl
 COPY . /root/rdap-rmp-demo
 RUN cd /root/rdap-rmp-demo/ && perl Makefile.PL && make && make test && make install
+RUN cp -r /root/rdap-rmp-demo/eg /
 RUN rm -rf /root/rdap-rmp-demo/

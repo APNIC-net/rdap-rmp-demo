@@ -1,0 +1,73 @@
+#!/usr/bin/perl
+
+use warnings;
+use strict;
+
+use File::Slurp qw(read_file);
+use Getopt::Long;
+
+use APNIC::RDAP::RMP::Server;
+
+sub usage
+{
+    print <<EOF;
+Usage:
+$0 --port {port number}
+   --url-base {base URL for server}
+   --db-path {path to DB file}
+   --data-path {path to UNF/snapshot/delta directory}
+   --object-path {path where RDAP objects will be written}
+   --key-path {path to private key for signing response objects}
+   --refresh {seconds}
+   --defaults {path to object defaults in JSON}
+
+Starts an RDAP RMP server.  See C<APNIC::RDAP::RMP::Server> for more
+information about parameters and endpoints.
+EOF
+
+    exit(10);
+}
+
+my %options;
+GetOptions(\%options,
+           'refresh=i',
+           'defaults=s',
+           'url-base=s',
+           'db-path=s',
+           'data-path=s',
+           'object-path=s',
+           'key-path=s',
+           'port=i');
+
+for my $param (qw(url-base db-path data-path object-path key-path port)) {
+    if (not $options{$param}) {
+        print "--$param must be set.\n";
+        usage();
+    }
+}
+
+if ($options{'defaults'}) {
+    $options{'defaults'} =
+        decode_json(read_file($options{'defaults'}));
+}
+my $key = read_file($options{'key-path'});
+
+my $rmp_server =
+    APNIC::RDAP::RMP::Server->new(
+        (defined $options{'refresh'})
+            ? (refresh => $options{'refresh'})
+            : (),
+        (defined $options{'defaults'})
+            ? (defaults => $options{'defaults'})
+            : (),
+        url_base    => $options{'url-base'},
+        db_path     => $options{'db-path'},
+        data_path   => $options{'data-path'},
+        object_path => $options{'object-path'},
+        port        => $options{'port'},
+        key         => $key,
+    );
+
+$rmp_server->run();
+
+1;

@@ -11,6 +11,7 @@ use HTTP::Daemon;
 use HTTP::Status qw(:constants);
 use JSON::XS qw(decode_json encode_json);
 use List::Util qw(first);
+use LWP::UserAgent;
 use Net::IP::XS;
 use Net::Patricia;
 use Set::IntervalTree;
@@ -33,10 +34,6 @@ sub new
 {
     my $class = shift;
     my %args = @_;
-    if (not $args{'db_path'}) {
-        die "db_path is a required argument";
-    }
-
     my $self = \%args;
     bless $self, $class;
 
@@ -141,7 +138,7 @@ sub _add_object
         my $tree = ($version eq 'v4') ? $db->{'ipv4'} : $db->{'ipv6'};
         my $net_ip =
             Net::IP::XS->new($object_data->{'startAddress'}.'-'.
-                            $object_data->{'endAddress'});
+                             $object_data->{'endAddress'});
         if (not $net_ip) {
             die "Invalid startAddress/endAddress";
         }
@@ -151,9 +148,11 @@ sub _add_object
                 or not exists $object_data->{'endAutnum'}) {
             die "No startAutnum/endAutnum";
         }
-        $db->{'autnum'}->insert($path,
+        $db->{'autnum'}->insert(
+            $path,
             $object_data->{'startAutnum'},
-            $object_data->{'endAutnum'}+1);
+            $object_data->{'endAutnum'}+1
+        );
     } elsif ($object_class_name eq 'domain') {
         $db->{'domain'}->{$object_data->{'ldhName'}} = $path;
     } elsif ($object_class_name eq 'nameserver') {
@@ -498,13 +497,13 @@ sub _get_ip
         return HTTP::Response->new(HTTP_BAD_REQUEST);
     }
 
-    my $nip = Net::IP::XS->new($ip);
-    if (not $nip) {
+    my $net_ip = Net::IP::XS->new($ip);
+    if (not $net_ip) {
         return HTTP::Response->new(HTTP_BAD_REQUEST);
     }
 
-    my $tree = ($nip->version() == 4) ? $db->{'ipv4'} : $db->{'ipv6'};
-    my $prefix = $nip->prefix();
+    my $tree = ($net_ip->version() == 4) ? $db->{'ipv4'} : $db->{'ipv6'};
+    my $prefix = $net_ip->prefix();
     my $res = $tree->match_string($prefix);
     if (not $res) {
         return HTTP::Response->new(HTTP_NOT_FOUND);
@@ -720,6 +719,25 @@ by that server.
 =item B<run>
 
 Run the client.
+
+=back
+
+=head1 ENDPOINTS
+
+=over 4
+
+=item B<POST /refresh>
+
+Refresh the mirroring state by fetching the update notification file
+from the mirroring server and processing the snapshot and/or deltas
+accordingly.
+
+=item B<GET /{object-type}/...>
+
+RDAP service endpoints for the objects retrieved via mirroring.
+The currently-supported object types are C<ip network>, C<autnum>,
+C<domain>, C<entity> and C<nameserver>.  Search endpoints are not
+supported at the moment.
 
 =back
 

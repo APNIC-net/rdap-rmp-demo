@@ -1,0 +1,55 @@
+#!/usr/bin/perl
+
+use warnings;
+use strict;
+
+use File::Slurp qw(read_file);
+use Getopt::Long;
+
+use APNIC::RDAP::RMP::Client;
+
+sub usage
+{
+    print <<EOF;
+Usage:
+$0 --port {port number for client's RDAP server}
+   --url-base {base URL for client's RDAP server}
+   --object-path {path where RDAP objects will be written}
+   --unf-url {URL for mirroring server's update notification file}
+   --key-path {path to public key for verifying mirroring objects}
+
+Starts an RDAP RMP client, which also provides RDAP service for the
+objects that it retrieves.  See C<APNIC::RDAP::RMP::Client> for more
+information about parameters and endpoints.
+EOF
+
+    exit(10);
+}
+
+my %options;
+GetOptions(\%options,
+           'url-base=s',
+           'unf-url=s',
+           'object-path=s',
+           'key-path=s',
+           'port=i');
+
+for my $param (qw(url-base unf-url object-path key-path port)) {
+    if (not $options{$param}) {
+        print "--$param must be set.\n";
+        usage();
+    }
+}
+my $key = read_file($options{'key-path'});
+
+my $rmp_client =
+    APNIC::RDAP::RMP::Client->new(
+        url_base    => $options{'url-base'},
+        unf_url     => $options{'unf-url'},
+        object_path => $options{'object-path'},
+        port        => $options{'port'},
+        key         => $key,
+    );
+$rmp_client->run();
+
+1;

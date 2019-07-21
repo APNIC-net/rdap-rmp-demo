@@ -1,0 +1,35 @@
+#!/bin/bash
+
+set -e
+
+cd /
+mkdir rdap
+cd rdap
+rdap-rmp-generate-key --public-out public.pem --private-out private.pem
+mkdir server
+cd server
+echo "{}" > db-path
+mkdir data
+cd data
+mkdir unf snapshot delta
+cd ..
+mkdir objects
+rdap-rmp-server \
+    --port 8080 \
+    --url-base http://localhost:8080 \
+    --db-path /rdap/server/db-path \
+    --data-path /rdap/server/data \
+    --object-path /rdap/server/objects \
+    --key-path /rdap/private.pem \
+    --refresh 3600 > /rdap/server/server-log 2>&1 &
+cd ..
+mkdir client
+cd client
+mkdir objects
+rdap-rmp-client \
+    --port 8081 \
+    --url-base http://localhost:8081 \
+    --object-path /rdap/clients/objects \
+    --unf-url http://localhost:8080/unf/unf.json \
+    --key-path /rdap/public.pem > /rdap/client/client-log 2>&1 &
+echo "Finished test setup."

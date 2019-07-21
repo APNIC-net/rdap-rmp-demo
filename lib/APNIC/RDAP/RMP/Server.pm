@@ -304,6 +304,7 @@ sub run
                 $res = HTTP::Response->new(HTTP_NOT_FOUND);
             }
             $c->send_response($res);
+            $self->save_db();
         }
     }
 
@@ -395,6 +396,41 @@ specified during construction.
 =item B<run>
 
 Run the server.
+
+=back
+
+=head1 ENDPOINTS
+
+=over 4
+
+=item B<POST /snapshot/generate>
+
+Generate a new snapshot based on the objects that have been
+written to the object path.
+
+=item B<POST /delta/generate>
+
+Generate a new delta (if necessary), based on the objects that
+have been written to the object path.
+
+=item B<POST /unf/generate>
+
+Generate a new update notification file.
+
+=item B<GET /unf/unf.json>
+
+Fetch the current update notification file.
+
+=item B<GET /snapshot/...>
+
+Fetch snapshots.  The snapshot links are managed by the application:
+the user will see the links in the update notification file.
+
+=item B<GET /delta/...>
+
+Fetch deltas.  As with snapshots, the links are managed by the
+application, and the user will see the links in the update
+notification file.
 
 =back
 

@@ -621,6 +621,129 @@ sub _get_nameserver
     return HTTP::Response->new(HTTP_OK, undef, [], $data);
 }
 
+sub _search_domains
+{
+    my ($self, $r) = @_;
+
+    my %query_form = $r->uri()->query_form();
+    my $name = $query_form{'name'} || '';
+    $name =~ s/\*/\.*/g;
+    my $sort = $query_form{'sort'} || '';
+    my @sort_details =
+        map { my $value = $_;
+              if ($value !~ /:/) {
+                  $value .= ':a';
+              }
+              [ split /:/, $value ] }
+            split /\s*,\s*/, $sort;
+
+    my @results;
+    for my $path (sort values %{$self->{'db'}->{'domain'}}) {
+        my $domain_obj = decode_json(read_file($path));
+        if ($domain_obj->{'ldhName'} =~ /^$name$/) {
+            push @results, $domain_obj;
+        }
+    }
+    @results =
+        sort { my $result = 0;
+               for my $sort_detail (@sort_details) {
+                   my ($field, $order) = @{$sort_detail};
+                   if ($order eq 'a') {
+                       $result = $a->{$field} cmp $b->{$field};
+                   } else {
+                       $result = $b->{$field} cmp $a->{$field};
+                   }
+                   if ($result != 0) {
+                       last;
+                   }
+               }
+               $result }
+            @results;
+
+    my $cursor = $query_form{'cursor'};
+    if (not $cursor) {
+        $cursor = 1;
+    }
+    my $per_page = 2;
+    my $index = ($cursor - 1) * $per_page;
+
+    my @page_results =
+        grep { $_ } @results[$index..($index + $per_page - 1)];
+
+    my $result_count = scalar @results;
+    my $page_count = $result_count / $per_page;
+    if (int($page_count) != $page_count) {
+        $page_count++;
+    }
+    my $value = $self->{'url_base'}.$r->uri()->as_string();
+
+    $query_form{'cursor'} = $cursor + 1;
+    my $new_uri = URI->new($r->uri());
+    $new_uri->query_form(%query_form);
+    my $next = $self->{'url_base'}.$new_uri->as_string();
+
+    my $sort_uri = URI->new($r->uri());
+    my %s_query_form = $sort_uri->query_form();
+    delete $s_query_form{'sort'};
+    delete $s_query_form{'cursor'};
+    my $make_link = sub {
+        my ($sort_value) = @_;
+        $s_query_form{'sort'} = $sort_value;
+        my $new_uri = URI->new($r->uri());
+        $new_uri->query_form(%s_query_form);
+        return $self->{'url_base'}.'/'.$new_uri->as_string();
+    };
+
+    my $data = {
+        rdapConformance => [qw(rdap_level_0
+                               paging_level_0
+                               sorting_level_0)],
+        domainSearchResults => \@page_results,
+        paging_metadata => {
+            totalCount => (scalar @results),
+            pageCount  => (scalar @page_results),
+            links      => [
+                { value => $value,
+                  rel   => 'next',
+                  href  => $next,
+                  title => 'Result pagination link',
+                  type  => 'application/rdap+json' }
+            ]
+        },
+        ($sort)
+            ? (sorting_metadata => {
+                currentSort => $sort,
+                availableSorts => [
+                    { property => 'ldhName',
+                      jsonPath => '$.domainSearchResults[*].ldhName',
+                      default  => \0,
+                      links    => [
+                          { value => $value,
+                            rel   => 'alternate',
+                            href  => $make_link->('ldhName:a'),
+                            title => 'Result Ascending Sort Link' },
+                          { value => $value,
+                            rel   => 'alternate',
+                            href  => $make_link->('ldhName:d'),
+                            title => 'Result Descending Sort Link' }
+                      ] }
+                ]
+              })
+            : ()
+    };
+
+    if ($page_count == $cursor) {
+        delete $data->{'paging_metadata'}->{'links'};
+    }
+    if ((exists $query_form{'count'})
+            and (not $query_form{'count'})) {
+        delete $data->{'paging_metadata'}->{'totalCount'};
+    }
+
+    return HTTP::Response->new(HTTP_OK, undef, [],
+                               encode_json($data));
+}
+
 sub _add_defaults
 {
     my ($self, $res) = @_;
@@ -670,6 +793,8 @@ sub run
                         $res = $self->_get_domain($r);
                     } elsif ($path =~ /\/nameserver\/.*/) {
                         $res = $self->_get_nameserver($r);
+                    } elsif ($path eq '/domains') {
+                        $res = $self->_search_domains($r);
                     }
                 }
                 if ($res) {

@@ -621,6 +621,96 @@ sub _get_nameserver
     return HTTP::Response->new(HTTP_OK, undef, [], $data);
 }
 
+sub _search_domains
+{
+    my ($self, $r) = @_;
+
+    my %query_form = $r->uri()->query_form();
+    my ($name, $fieldset) = @query_form{qw(name fieldSet)};
+    $fieldset ||= 'full';
+
+    if (not $name) {
+        return HTTP::Response->new(HTTP_BAD_REQUEST);
+    }
+
+    $name =~ s/\*/.*/g;
+    my @domains =
+        grep { $_->{'ldhName'} =~ /^$name$/ }
+        map  { decode_json(read_file($_)) }
+            values %{$self->{'db'}->{'domain'}};
+
+    my @results;
+    for my $domain (@domains) {
+        if ($fieldset eq 'id') {
+            my %fs_domain = (
+                objectClassName => $domain->{'objectClassName'},
+                ldhName         => $domain->{'ldhName'}
+            );
+            push @results, \%fs_domain;
+        } elsif ($fieldset eq 'brief') {
+            my %fs_domain = (
+                objectClassName => $domain->{'objectClassName'},
+                ldhName         => $domain->{'ldhName'},
+                links           => $domain->{'links'},
+            );
+            push @results, \%fs_domain;
+        } elsif ($fieldset eq 'full') {
+            push @results, $domain;
+        }
+    }
+
+    my $make_uri = sub {
+        my ($fieldset) = @_;
+        my $new_uri = $r->uri();
+        my %query_form = $new_uri->query_form();
+        $query_form{'fieldSet'} = $fieldset;
+        $new_uri->query_form(%query_form);
+        return $self->{'url_base'}.$new_uri->as_string();
+    };
+
+    my $content = encode_json({
+        rdapConformance => [qw(subsetting_level_0)],
+        subsetting_metadata => {
+            currentFieldSet => $fieldset,
+            availableFieldSets => [
+                { name => 'id',
+                  description => 'id',
+                  default => \0,
+                  links => [
+                      { value => $r->uri()->as_string(),
+                        rel   => 'alternate',
+                        href  => $make_uri->('id'),
+                        title => 'Result subset link',
+                        type  => 'application/rdap+json' }
+                  ] },
+                { name => 'brief',
+                  description => 'brief',
+                  default => \0,
+                  links => [
+                      { value => $r->uri()->as_string(),
+                        rel   => 'alternate',
+                        href  => $make_uri->('brief'),
+                        title => 'Result subset link',
+                        type  => 'application/rdap+json' }
+                  ] },
+                { name => 'full',
+                  description => 'full',
+                  default => \1,
+                  links => [
+                      { value => $r->uri()->as_string(),
+                        rel   => 'alternate',
+                        href  => $make_uri->('full'),
+                        title => 'Result subset link',
+                        type  => 'application/rdap+json' }
+                  ] }
+            ]
+        },
+        domainSearchResults => \@results,
+    });
+
+    return HTTP::Response->new(HTTP_OK, undef, [], $content);
+}
+
 sub _add_defaults
 {
     my ($self, $res) = @_;
@@ -670,6 +760,8 @@ sub run
                         $res = $self->_get_domain($r);
                     } elsif ($path =~ /\/nameserver\/.*/) {
                         $res = $self->_get_nameserver($r);
+                    } elsif ($path eq '/domains') {
+                        $res = $self->_search_domains($r);
                     }
                 }
                 if ($res) {

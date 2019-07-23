@@ -3,6 +3,7 @@ package APNIC::RDAP::RMP::Client;
 use warnings;
 use strict;
 
+use Clone qw(clone);
 use Crypt::JWT qw(decode_jwt);
 use Digest::MD5 qw(md5_hex);
 use File::Find;
@@ -621,6 +622,130 @@ sub _get_nameserver
     return HTTP::Response->new(HTTP_OK, undef, [], $data);
 }
 
+my %ADR_MAP = (
+    street => 2,
+    city   => 3,
+    sp     => 4,
+    pc     => 5,
+    cc     => 6
+);
+
+sub _search_domains
+{
+    my ($self, $r) = @_;
+
+    my %query_form = $r->uri()->query_form();
+
+    my $search_arg_original;
+    my ($type, $value, $role);
+    if ($search_arg_original = $query_form{'entityHandle'}) {
+        my $search_arg = decode_json($search_arg_original);
+        $type = 'handle';
+        $value = $search_arg->{'value'};
+        $role = $search_arg->{'role'};
+        $value =~ s/\*/.*/g;
+    } elsif ($search_arg_original = $query_form{'entityFn'}) {
+        my $search_arg = decode_json($search_arg_original);
+        $type = 'fn';
+        $value = $search_arg->{'value'};
+        $role = $search_arg->{'role'};
+        $value =~ s/\*/.*/g;
+    } elsif ($search_arg_original = $query_form{'entityEmail'}) {
+        my $search_arg = decode_json($search_arg_original);
+        $type = 'email';
+        $value = $search_arg->{'value'};
+        $role = $search_arg->{'role'};
+        $value =~ s/\*/.*/g;
+    } elsif ($search_arg_original = $query_form{'entityAddr'}) {
+        my $search_arg = decode_json($search_arg_original);
+        $type = 'addr';
+        $value = $search_arg->{'value'};
+        $role = $search_arg->{'role'};
+        for my $key (keys %{$value}) {
+            $value->{$key} =~ s/\*/.*/g;
+        }
+    } else {
+        return HTTP::Response->new(HTTP_BAD_REQUEST);
+    }
+
+    my @results;
+    DOMAIN: for my $domain_path (values %{$self->{'db'}->{'domain'}}) {
+        my $domain_obj = decode_json(read_file($domain_path));
+        my $entities = $domain_obj->{'entities'};
+        if (not $entities) {
+            next;
+        }
+        for my $entity (@{$entities}) {
+            my $handle = $entity->{'handle'};
+            my $entity_path = $self->{'db'}->{'entities'}->{$handle};
+            my $entity_obj = decode_json(read_file($entity_path));
+            my $roles = $entity->{'roles'} || $entity_obj->{'roles'};
+            if ($role and not (grep { $_ eq $role } @{$roles || []})) {
+                next;
+            }
+            if ($type eq 'handle') {
+                if ($entity_obj->{'handle'} !~ /^$value$/) {
+                    next;
+                }
+            } elsif ($type eq 'fn') {
+                my @fns =
+                    grep { ($_->[0] eq 'fn')
+                            and ($_->[3] =~ /^$value$/) }
+                        @{$entity_obj->{'vcardArray'}->[1]};
+                if (not @fns) {
+                    next;
+                }
+            } elsif ($type eq 'email') {
+                my @emails =
+                    grep { ($_->[0] eq 'email')
+                            and ($_->[3] =~ /^$value$/) }
+                        @{$entity_obj->{'vcardArray'}->[1]};
+                if (not @emails) {
+                    next;
+                }
+            } elsif ($type eq 'addr') {
+                my @adrs =
+                    grep { $_->[0] eq 'adr' }
+                        @{$entity_obj->{'vcardArray'}->[1]};
+                my $found_adr = 0;
+                ADR: for my $adr (@adrs) {
+                    for my $adr_type (keys %ADR_MAP) {
+                        if (not exists $value->{$adr_type}) {
+                            next;
+                        }
+                        my $index = $ADR_MAP{$adr_type};
+                        my $pattern = $value->{$adr_type};
+                        if ($adr->[3]->[$index] !~ /^$pattern$/) {
+                            next ADR;
+                        }
+                    }
+                    $found_adr = 1;
+                    last;
+                }
+                if (not $found_adr) {
+                    next;
+                }
+            }
+
+            push @results, $domain_obj;
+            next DOMAIN;
+        }
+    }
+
+    my $response_data = encode_json({
+        rdapConformance => ["rdap_level_0"],
+        domainSearchResults => [
+            map { my $obj = clone($_);
+                  delete $obj->{'rdapConformance'};
+                  $obj }
+                @results
+        ]
+    });
+
+    return HTTP::Response->new(HTTP_OK, [], undef,
+                               $response_data);
+}
+
 sub _add_defaults
 {
     my ($self, $res) = @_;
@@ -670,6 +795,8 @@ sub run
                         $res = $self->_get_domain($r);
                     } elsif ($path =~ /\/nameserver\/.*/) {
                         $res = $self->_get_nameserver($r);
+                    } elsif ($path eq '/domains') {
+                        $res = $self->_search_domains($r);
                     }
                 }
                 if ($res) {

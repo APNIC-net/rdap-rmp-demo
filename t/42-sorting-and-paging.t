@@ -15,7 +15,7 @@ use APNIC::RDAP::RMP::Client;
 use APNIC::RDAP::RMP::Server;
 use APNIC::RDAP::RMP::Serial qw(new_serial);
 
-use Test::More tests => 31;
+use Test::More tests => 55;
 
 my $pid;
 my $client_pid;
@@ -78,15 +78,6 @@ my $client_pid;
         exit();
     }
 
-    write_file("$object_path/entity/TP137-AP", encode_json({
-        rdapConformance => ['rdap_level_0'],
-        objectClassName => 'entity',
-        handle          => 'TP137-AP',
-        links           => [
-            { rel  => 'self',
-              href => 'https://example.com/entity/TP137-AP' }
-        ]
-    }));
     for my $num (100..200) {
         my $year = 2000 + (200 - $num);
         write_file("$object_path/domain/$num.in-addr.arpa", encode_json({
@@ -114,6 +105,36 @@ my $client_pid;
                   eventDate   => "$year-05-05T00:00:00Z" },
                 { eventAction => 'transfer',
                   eventDate   => "1000-05-05T00:00:00Z" },
+            ],
+        }));
+    }
+
+    for my $num (100..200) {
+        my $year = 2000 + (200 - $num);
+        my $id = "TP$num-AP";
+        my $num1 = 200 - $num;
+        my $num2 = (($num + 50) % 100) + 100;
+        my $num3 = (($num + 60) % 100) + 100;
+        my $num4 = (($num + 70) % 100) + 100;
+        my $num5 = (($num + 80) % 100) + 100;
+        write_file("$object_path/entity/$id", encode_json({
+            rdapConformance => ['rdap_level_0'],
+            objectClassName => 'entity',
+            handle          => $id,
+            links           => [
+                { rel  => 'self',
+                  href => "https://example.com/entity/$id" }
+            ],
+            vcardArray => [
+                'vcard',
+                [ [ 'version', {}, 'text', '4.0' ],
+                  [ 'fn', {}, 'text', "Test $num1 User" ],
+                  [ 'tel', { type => [ 'voice' ] },
+                    'text', "+61-0000-0$num2" ],
+                  [ 'tel', { pref => 1 },
+                    'text', "+61-0000-0000" ],
+                  [ 'adr', { cc => $num3 },
+                    'text', [ '', '', '', $num5, '', '', $num4 ] ] ],
             ],
         }));
     }
@@ -218,6 +239,74 @@ my $client_pid;
         'Got correct first last-changed event date');
     is($lc1->{'eventDate'}, '2099-01-01T00:00:00Z',
         'Got correct second last-changed event date');
+
+    my $uri = URI->new($client_base.'/entities');
+    $uri->query_form(fn   => 'Test * User',
+                     sort => 'fn');
+    $res = $ua->get($uri->as_string());
+    ok($res->is_success(), 'Got paged search results');
+    my $data = decode_json($res->content());
+    my @results = @{$data->{'entitySearchResults'}};
+    is(@results, 2, 'Got two results');
+    is($results[0]->{'vcardArray'}->[1]->[1]->[3], 'Test 0 User',
+        'Got correct first record (fn)');
+    is($results[0]->{'handle'}, 'TP200-AP',
+        'Got correct first record (handle)');
+    is($results[1]->{'vcardArray'}->[1]->[1]->[3], 'Test 1 User',
+        'Got correct second record (fn)');
+    is($results[1]->{'handle'}, 'TP199-AP',
+        'Got correct second record (handle)');
+
+    my $uri = URI->new($client_base.'/entities');
+    $uri->query_form(fn   => 'Test * User',
+                     sort => 'cc:d');
+    $res = $ua->get($uri->as_string());
+    ok($res->is_success(), 'Got paged search results');
+    my $data = decode_json($res->content());
+    my @results = @{$data->{'entitySearchResults'}};
+    is(@results, 2, 'Got two results');
+    is($results[0]->{'handle'}, 'TP139-AP',
+        'Got correct first record (handle)');
+    is($results[0]->{'vcardArray'}->[1]->[4]->[1]->{'cc'}, '199',
+        'Got correct first record (cc)');
+    is($results[1]->{'handle'}, 'TP138-AP',
+        'Got correct second record (handle)');
+    is($results[1]->{'vcardArray'}->[1]->[4]->[1]->{'cc'}, '198',
+        'Got correct second record (cc)');
+
+    my $uri = URI->new($client_base.'/entities');
+    $uri->query_form(fn   => 'Test * User',
+                     sort => 'voice:a');
+    $res = $ua->get($uri->as_string());
+    ok($res->is_success(), 'Got paged search results');
+    my $data = decode_json($res->content());
+    my @results = @{$data->{'entitySearchResults'}};
+    is(@results, 2, 'Got two results');
+    is($results[0]->{'handle'}, 'TP150-AP',
+        'Got correct first record (handle)');
+    is($results[0]->{'vcardArray'}->[1]->[2]->[3], '+61-0000-0100',
+        'Got correct first record (phone)');
+    is($results[1]->{'handle'}, 'TP151-AP',
+        'Got correct second record (handle)');
+    is($results[1]->{'vcardArray'}->[1]->[2]->[3], '+61-0000-0101',
+        'Got correct second record (phone)');
+
+    my $uri = URI->new($client_base.'/entities');
+    $uri->query_form(fn   => 'Test * User',
+                     sort => 'city');
+    $res = $ua->get($uri->as_string());
+    ok($res->is_success(), 'Got paged search results');
+    my $data = decode_json($res->content());
+    my @results = @{$data->{'entitySearchResults'}};
+    is(@results, 2, 'Got two results');
+    is($results[0]->{'handle'}, 'TP120-AP',
+        'Got correct first record (handle)');
+    is($results[0]->{'vcardArray'}->[1]->[4]->[3]->[3], '100',
+        'Got correct first record (city)');
+    is($results[1]->{'handle'}, 'TP121-AP',
+        'Got correct second record (handle)');
+    is($results[1]->{'vcardArray'}->[1]->[4]->[3]->[3], '101',
+        'Got correct second record (city)');
 
     my $res2 = $ua->post($server_base.'/shutdown');
     waitpid($pid, 0);

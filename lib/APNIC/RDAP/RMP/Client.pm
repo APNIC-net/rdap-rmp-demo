@@ -206,7 +206,7 @@ sub _remove_object
     } elsif ($object_class_name eq 'nameserver') {
         delete $db->{'nameserver'}->{$object_data->{'ldhName'}};
     } elsif ($object_class_name eq 'entity') {
-        delete $db->{'entity'}->{$object_data->{'handle'}};
+        delete $db->{'entities'}->{$object_data->{'handle'}};
     }
 
     unlink($db->{'by_id'}->{$id});
@@ -639,7 +639,80 @@ sub _event_mapper
     return $event->{'eventDate'};
 }
 
-my %common_mapper = (
+sub _vcard_mapper_normal
+{
+    my ($object, $sort_name) = @_;
+
+    my @elements = @{$object->{'vcardArray'}->[1]};
+    my @relevant_elements =
+        sort { ($a->[1]->{'pref'} || '')
+                cmp ($b->[1]->{'pref'} || '') }
+        grep { $_->[0] eq $sort_name }
+            @elements;
+    return $relevant_elements[0]->[3];
+}
+
+sub _vcard_mapper_address
+{
+    my ($object, $sort_name) = @_;
+
+    my @elements = @{$object->{'vcardArray'}->[1]};
+    my @relevant_elements =
+        sort { ($a->[1]->{'pref'} || '')
+                cmp ($b->[1]->{'pref'} || '') }
+        grep { $_->[0] eq 'adr' }
+            @elements;
+    my $adr = $relevant_elements[0];
+    if (not $adr) {
+        return;
+    }
+    my $index =
+        ($sort_name eq 'country') ? 6
+      : ($sort_name eq 'city')    ? 3
+                                  : undef;
+    if (not $index) {
+        return;
+    }
+    return $adr->[3]->[$index];
+}
+
+sub _vcard_mapper_voice
+{
+    my ($object) = @_;
+
+    my @elements = @{$object->{'vcardArray'}->[1]};
+    my @relevant_elements =
+        sort { ($a->[1]->{'pref'} || '')
+                cmp ($b->[1]->{'pref'} || '') }
+        grep { $_->[0] eq 'tel'
+                and first { $_ eq 'voice' } @{$_->[1]->{'type'} || []} }
+            @elements;
+    my $tel = $relevant_elements[0];
+    if (not $tel) {
+        return;
+    }
+
+    return $tel->[3];
+}
+
+sub _vcard_mapper_cc
+{
+    my ($object) = @_;
+
+    my @elements = @{$object->{'vcardArray'}->[1]};
+    my @relevant_elements =
+        sort { ($a->[1]->{'pref'} || '')
+                cmp ($b->[1]->{'pref'} || '') }
+        grep { $_->[0] eq 'adr' and $_->[1]->{'cc'} }
+            @elements;
+    my $adr = $relevant_elements[0];
+    if (not $adr) {
+        return;
+    }
+    return $adr->[1]->{'cc'};
+}
+
+my %common_mappers = (
     map { my $name = $_;
           $name => sub { _event_mapper($_[0], $name) } }
         qw(registrationDate
@@ -652,10 +725,159 @@ my %common_mapper = (
            lockedDate
            unlockedDate)
 );
+
 my %domain_mappers = (
+    %common_mappers,
     name => sub { $_[0]->{'ldhName'} },
-    %common_mapper,
 );
+
+my %entity_mappers = (
+    %common_mappers,
+    (map { my $name = $_;
+          $name => sub { _vcard_mapper_normal($_[0], $name) } }
+        qw(fn
+           handle
+           org
+           email)),
+    (map { my $name = $_;
+          $name => sub { _vcard_mapper_address($_[0], $name) } }
+        qw(country
+           city)),
+    voice => sub { _vcard_mapper_voice($_[0]) },
+    cc    => sub { _vcard_mapper_cc($_[0]) },
+);
+
+sub _search_entities
+{
+    my ($self, $r) = @_;
+
+    my %query_form = $r->uri()->query_form();
+    my $fn_search = $query_form{'fn'} || '';
+    $fn_search =~ s/\*/\.*/g;
+    my $sort = $query_form{'sort'} || '';
+    my @sort_details =
+        map { my $value = $_;
+              if ($value !~ /:/) {
+                  $value .= ':a';
+              }
+              [ split /:/, $value ] }
+            split /\s*,\s*/, $sort;
+
+    my @results;
+    for my $path (sort values %{$self->{'db'}->{'entities'}}) {
+        my $entity_obj = decode_json(read_file($path));
+        my $fn =
+            first { $_->[0] eq 'fn' }
+                @{$entity_obj->{'vcardArray'}->[1]};
+        if ($fn->[3] =~ /^$fn_search$/) {
+            push @results, $entity_obj;
+        }
+    }
+    @results =
+        sort { my $result = 0;
+               for my $sort_detail (@sort_details) {
+                   my ($field, $order) = @{$sort_detail};
+                   my $mapper = $entity_mappers{$field};
+                   my ($a_value, $b_value) =
+                       map { $mapper->($_) }
+                           ($a, $b);
+                   if ($order eq 'a') {
+                       $result = $a_value cmp $b_value;
+                   } else {
+                       $result = $b_value cmp $a_value;
+                   }
+                   if ($result != 0) {
+                       last;
+                   }
+               }
+               $result }
+            @results;
+
+    my $cursor = $query_form{'cursor'};
+    if (not $cursor) {
+        $cursor = 1;
+    }
+    my $current_page_number = $cursor;
+    my $per_page = 2;
+    my $index = ($cursor - 1) * $per_page;
+
+    my @page_results =
+        grep { $_ } @results[$index..($index + $per_page - 1)];
+
+    my $result_count = scalar @results;
+    my $page_count = $result_count / $per_page;
+    if (int($page_count) != $page_count) {
+        $page_count++;
+    }
+    my $value = $self->{'url_base'}.$r->uri()->as_string();
+
+    $query_form{'cursor'} = $cursor + 1;
+    my $new_uri = URI->new($r->uri());
+    $new_uri->query_form(%query_form);
+    my $next = $self->{'url_base'}.$new_uri->as_string();
+
+    my $sort_uri = URI->new($r->uri());
+    my %s_query_form = $sort_uri->query_form();
+    delete $s_query_form{'sort'};
+    delete $s_query_form{'cursor'};
+    my $make_link = sub {
+        my ($sort_value) = @_;
+        $s_query_form{'sort'} = $sort_value;
+        my $new_uri = URI->new($r->uri());
+        $new_uri->query_form(%s_query_form);
+        return $self->{'url_base'}.'/'.$new_uri->as_string();
+    };
+
+    my $data = {
+        rdapConformance => [qw(rdap_level_0
+                               paging_level_0
+                               sorting_level_0)],
+        entitySearchResults => \@page_results,
+        paging_metadata => {
+            totalCount => (scalar @results),
+            pageSize   => (scalar @page_results),
+            pageNumber => $current_page_number,
+            links      => [
+                { value => $value,
+                  rel   => 'next',
+                  href  => $next,
+                  title => 'Result pagination link',
+                  type  => 'application/rdap+json' }
+            ]
+        },
+        ($sort)
+            ? (sorting_metadata => {
+                currentSort => $sort,
+                availableSorts => [
+                    { property => 'fn',
+                      jsonPath => '$.entitySearchResults[*].vcardArray[1][?(@[0]="fn")][3]',
+                      default  => \0,
+                      links    => [
+                          { value => $value,
+                            rel   => 'alternate',
+                            href  => $make_link->('fn:a'),
+                            title => 'Result Ascending Sort Link' },
+                          { value => $value,
+                            rel   => 'alternate',
+                            href  => $make_link->('fn:d'),
+                            title => 'Result Descending Sort Link' }
+                      ] }
+                ]
+              })
+            : ()
+    };
+
+    if ($page_count == $cursor) {
+        delete $data->{'paging_metadata'}->{'links'};
+    }
+    if ((exists $query_form{'count'})
+            and (not $query_form{'count'})) {
+        delete $data->{'paging_metadata'}->{'totalCount'};
+    }
+
+    return HTTP::Response->new(HTTP_OK, undef, [],
+                               encode_json($data));
+}
 
 sub _search_domains
 {
@@ -756,17 +978,17 @@ sub _search_domains
             ? (sorting_metadata => {
                 currentSort => $sort,
                 availableSorts => [
-                    { property => 'ldhName',
+                    { property => 'name',
                       jsonPath => '$.domainSearchResults[*].ldhName',
                       default  => \0,
                       links    => [
                           { value => $value,
                             rel   => 'alternate',
-                            href  => $make_link->('ldhName:a'),
+                            href  => $make_link->('name:a'),
                             title => 'Result Ascending Sort Link' },
                           { value => $value,
                             rel   => 'alternate',
-                            href  => $make_link->('ldhName:d'),
+                            href  => $make_link->('name:d'),
                             title => 'Result Descending Sort Link' }
                       ] }
                 ]
@@ -837,6 +1059,8 @@ sub run
                         $res = $self->_get_nameserver($r);
                     } elsif ($path eq '/domains') {
                         $res = $self->_search_domains($r);
+                    } elsif ($path eq '/entities') {
+                        $res = $self->_search_entities($r);
                     }
                 }
                 if ($res) {

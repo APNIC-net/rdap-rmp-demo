@@ -701,7 +701,7 @@ sub _search_domains
         domainSearchResults => \@page_results,
         paging_metadata => {
             totalCount => (scalar @results),
-            pageCount  => (scalar @page_results),
+            pageSize   => (scalar @page_results),
             links      => [
                 { value => $value,
                   rel   => 'next',

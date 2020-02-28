@@ -123,7 +123,7 @@ my $client_pid;
     is(@results, 2, 'Got two results');
     my %ldh_names = map { $_->{'ldhName'} => 1 } @results;
 
-    is($data->{'paging_metadata'}->{'pageCount'}, 2,
+    is($data->{'paging_metadata'}->{'pageSize'}, 2,
         'Two results returned');
     is($data->{'paging_metadata'}->{'totalCount'}, 10,
         'Ten results in total');
@@ -139,7 +139,7 @@ my $client_pid;
     my %all_ldh_names = (%ldh_names, %new_ldh_names);
     is((keys %all_ldh_names), 4, 'Next page contains new results');
 
-    is($data->{'paging_metadata'}->{'pageCount'}, 2,
+    is($data->{'paging_metadata'}->{'pageSize'}, 2,
         'Two results returned');
     is($data->{'paging_metadata'}->{'totalCount'}, 10,
         'Ten results in total');

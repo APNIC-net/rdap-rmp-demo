@@ -8,13 +8,14 @@ use Crypt::PK::ECC;
 use File::Slurp qw(read_file write_file);
 use File::Temp qw(tempdir);
 use JSON::XS qw(decode_json encode_json);
+use List::Util qw(first);
 use LWP::UserAgent;
 
 use APNIC::RDAP::RMP::Client;
 use APNIC::RDAP::RMP::Server;
 use APNIC::RDAP::RMP::Serial qw(new_serial);
 
-use Test::More tests => 26;
+use Test::More tests => 31;
 
 my $pid;
 my $client_pid;
@@ -87,21 +88,32 @@ my $client_pid;
         ]
     }));
     for my $num (100..200) {
+        my $year = 2000 + (200 - $num);
         write_file("$object_path/domain/$num.in-addr.arpa", encode_json({
             rdapConformance => ['rdap_level_0'],
             objectClassName => 'domain',
             ldhName         => $num.'.in-addr.arpa',
             links           => [
                 { rel  => 'self',
-                href => 'https://example.com/domain/'.$num.'.in-addr.arpa' }
+                  href => 'https://example.com/domain/'.$num.'.in-addr.arpa' }
             ],
             entities        => [
                 { objectClassName => 'entity',
-                handle          => 'TP137-AP',
-                links           => [
-                    { rel => 'self',
+                  handle          => 'TP137-AP',
+                  links           => [
+                      { rel => 'self',
                         href => 'https://example.com/entity/TP137-AP' }
-                ] }
+                  ] }
+            ],
+            events          => [
+                { eventAction => 'last changed',
+                  eventDate   => "$year-01-01T00:00:00Z" },
+                { eventAction => 'last changed',
+                  eventDate   => "3000-01-01T00:00:00Z" },
+                { eventAction => 'transfer',
+                  eventDate   => "$year-05-05T00:00:00Z" },
+                { eventAction => 'transfer',
+                  eventDate   => "1000-05-05T00:00:00Z" },
             ],
         }));
     }
@@ -150,7 +162,7 @@ my $client_pid;
 
     my $uri = URI->new($client_base.'/domains');
     $uri->query_form(name => '10*in-addr.arpa',
-                     sort => 'ldhName');
+                     sort => 'name');
     $res = $ua->get($uri->as_string());
     ok($res->is_success(), 'Got paged search results');
     my $data = decode_json($res->content());
@@ -175,7 +187,7 @@ my $client_pid;
 
     my $uri = URI->new($client_base.'/domains');
     $uri->query_form(name => '10*in-addr.arpa',
-                     sort => 'ldhName:d');
+                     sort => 'name:d');
     $res = $ua->get($uri->as_string());
     ok($res->is_success(), 'Got paged search results');
     my $data = decode_json($res->content());
@@ -185,6 +197,27 @@ my $client_pid;
         'First result has correct ldhName');
     is($results[1]->{'ldhName'}, '108.in-addr.arpa',
         'Second result has correct ldhName');
+
+    my $uri = URI->new($client_base.'/domains');
+    $uri->query_form(name => '10*in-addr.arpa',
+                     sort => 'lastChangedDate:d');
+    $res = $ua->get($uri->as_string());
+    ok($res->is_success(), 'Got paged search results');
+    my $data = decode_json($res->content());
+    my @results = @{$data->{'domainSearchResults'}};
+    is(@results, 2, 'Got two results');
+    my $lc0 =
+        first { $_->{'eventAction'} eq 'last changed' }
+            @{$results[0]->{'events'}};
+    my $lc1 =
+        first { $_->{'eventAction'} eq 'last changed' }
+            @{$results[1]->{'events'}};
+    ok(($lc0->{'eventDate'} gt $lc1->{'eventDate'}),
+        'Last-changed date is in correct order');
+    is($lc0->{'eventDate'}, '2100-01-01T00:00:00Z',
+        'Got correct first last-changed event date');
+    is($lc1->{'eventDate'}, '2099-01-01T00:00:00Z',
+        'Got correct second last-changed event date');
 
     my $res2 = $ua->post($server_base.'/shutdown');
     waitpid($pid, 0);

@@ -621,6 +621,42 @@ sub _get_nameserver
     return HTTP::Response->new(HTTP_OK, undef, [], $data);
 }
 
+sub _event_mapper
+{
+    my ($object, $sort_name) = @_;
+
+    $sort_name =~ s/Date$//;
+    if ($sort_name eq 'lastChanged') {
+        $sort_name = 'last changed';
+    }
+    my $event_name = $sort_name;
+
+    my $event =
+        first { ($_->{'eventAction'} eq $sort_name)
+                    and $_->{'eventDate'} }
+            @{$object->{'events'}};
+
+    return $event->{'eventDate'};
+}
+
+my %common_mapper = (
+    map { my $name = $_;
+          $name => sub { _event_mapper($_[0], $name) } }
+        qw(registrationDate
+           reregistrationDate
+           lastChangedDate
+           expirationDate
+           deletionDate
+           reinstantiationDate
+           transferDate
+           lockedDate
+           unlockedDate)
+);
+my %domain_mappers = (
+    name => sub { $_[0]->{'ldhName'} },
+    %common_mapper,
+);
+
 sub _search_domains
 {
     my ($self, $r) = @_;
@@ -648,10 +684,14 @@ sub _search_domains
         sort { my $result = 0;
                for my $sort_detail (@sort_details) {
                    my ($field, $order) = @{$sort_detail};
+                   my $mapper = $domain_mappers{$field};
+                   my ($a_value, $b_value) =
+                       map { $mapper->($_) }
+                           ($a, $b);
                    if ($order eq 'a') {
-                       $result = $a->{$field} cmp $b->{$field};
+                       $result = $a_value cmp $b_value;
                    } else {
-                       $result = $b->{$field} cmp $a->{$field};
+                       $result = $b_value cmp $a_value;
                    }
                    if ($result != 0) {
                        last;

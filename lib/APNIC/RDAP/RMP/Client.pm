@@ -664,6 +664,7 @@ sub _search_domains
     if (not $cursor) {
         $cursor = 1;
     }
+    my $current_page_number = $cursor;
     my $per_page = 2;
     my $index = ($cursor - 1) * $per_page;
 
@@ -702,6 +703,7 @@ sub _search_domains
         paging_metadata => {
             totalCount => (scalar @results),
             pageSize   => (scalar @page_results),
+            pageNumber => $current_page_number,
             links      => [
                 { value => $value,
                   rel   => 'next',

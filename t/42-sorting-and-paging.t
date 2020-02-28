@@ -14,7 +14,7 @@ use APNIC::RDAP::RMP::Client;
 use APNIC::RDAP::RMP::Server;
 use APNIC::RDAP::RMP::Serial qw(new_serial);
 
-use Test::More tests => 24;
+use Test::More tests => 26;
 
 my $pid;
 my $client_pid;
@@ -127,6 +127,8 @@ my $client_pid;
         'Two results returned');
     is($data->{'paging_metadata'}->{'totalCount'}, 10,
         'Ten results in total');
+    is($data->{'paging_metadata'}->{'pageNumber'}, 1,
+        'On page one of the results');
 
     my $next = $data->{'paging_metadata'}->{'links'}->[0]->{'href'};
     $res = $ua->get($next);
@@ -143,6 +145,8 @@ my $client_pid;
         'Two results returned');
     is($data->{'paging_metadata'}->{'totalCount'}, 10,
         'Ten results in total');
+    is($data->{'paging_metadata'}->{'pageNumber'}, 2,
+        'On page two of the results');
 
     my $uri = URI->new($client_base.'/domains');
     $uri->query_form(name => '10*in-addr.arpa',

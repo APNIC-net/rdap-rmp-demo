@@ -644,7 +644,8 @@ sub _search_domains
         if ($fieldset eq 'id') {
             my %fs_domain = (
                 objectClassName => $domain->{'objectClassName'},
-                ldhName         => $domain->{'ldhName'}
+                ldhName         => $domain->{'ldhName'},
+                links           => $domain->{'links'},
             );
             push @results, \%fs_domain;
         } elsif ($fieldset eq 'brief') {

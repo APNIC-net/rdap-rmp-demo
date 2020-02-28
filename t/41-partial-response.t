@@ -140,9 +140,17 @@ my $client_pid;
             @{$data->{'domainSearchResults'}};
     is_deeply(\@results,
         [ { objectClassName => 'domain',
-            ldhName         => '100.in-addr.arpa' },
+            ldhName         => '100.in-addr.arpa',
+            links           => [
+                { rel  => 'self',
+                  href => $client_base.'/domain/100.in-addr.arpa' }
+            ] },
           { objectClassName => 'domain',
-            ldhName         => '101.in-addr.arpa' } ],
+            ldhName         => '101.in-addr.arpa',
+            links           => [
+                { rel  => 'self',
+                  href => $client_base.'/domain/101.in-addr.arpa' }
+            ] } ],
         'Got correct result sets (id)');
 
     $uri = URI->new($client_base.'/domains');
@@ -180,9 +188,17 @@ my $client_pid;
             @{$data->{'domainSearchResults'}};
     is_deeply(\@results,
         [ { objectClassName => 'domain',
-            ldhName         => '100.in-addr.arpa' },
+            ldhName         => '100.in-addr.arpa',
+            links           => [
+                { rel  => 'self',
+                  href => $client_base.'/domain/100.in-addr.arpa' }
+            ] },
           { objectClassName => 'domain',
-            ldhName         => '101.in-addr.arpa' } ],
+            ldhName         => '101.in-addr.arpa',
+            links           => [
+                { rel  => 'self',
+                  href => $client_base.'/domain/101.in-addr.arpa' }
+            ] } ],
         'Got correct result sets (id link)');
 
     my $res2 = $ua->post($server_base.'/shutdown');

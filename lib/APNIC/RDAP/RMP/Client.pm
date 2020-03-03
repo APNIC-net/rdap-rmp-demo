@@ -778,6 +778,9 @@ sub _search_entities
                for my $sort_detail (@sort_details) {
                    my ($field, $order) = @{$sort_detail};
                    my $mapper = $entity_mappers{$field};
+                   if (not $mapper) {
+                       return HTTP::Response->new(HTTP_BAD_REQUEST);
+                   }
                    my ($a_value, $b_value) =
                        map { $mapper->($_) }
                            ($a, $b);
@@ -870,9 +873,16 @@ sub _search_entities
     if ($page_count == $cursor) {
         delete $data->{'paging_metadata'}->{'links'};
     }
-    if ((exists $query_form{'count'})
-            and (not $query_form{'count'})) {
-        delete $data->{'paging_metadata'}->{'totalCount'};
+
+    # totalCount is included by default, which is why there is no
+    # check for the true values for the count parameter.
+    if (exists $query_form{'count'}) {
+        my $value = $query_form{'count'} || '';
+        if ((not $value)
+                or ($value eq 'false')
+                or ($value eq 'no')) {
+            delete $data->{'paging_metadata'}->{'totalCount'};
+        }
     }
 
     return HTTP::Response->new(HTTP_OK, undef, [],
@@ -907,6 +917,9 @@ sub _search_domains
                for my $sort_detail (@sort_details) {
                    my ($field, $order) = @{$sort_detail};
                    my $mapper = $domain_mappers{$field};
+                   if (not $mapper) {
+                       return HTTP::Response->new(HTTP_BAD_REQUEST);
+                   }
                    my ($a_value, $b_value) =
                        map { $mapper->($_) }
                            ($a, $b);

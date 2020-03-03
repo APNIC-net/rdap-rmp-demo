@@ -15,7 +15,7 @@ use APNIC::RDAP::RMP::Client;
 use APNIC::RDAP::RMP::Server;
 use APNIC::RDAP::RMP::Serial qw(new_serial);
 
-use Test::More tests => 55;
+use Test::More tests => 59;
 
 my $pid;
 my $client_pid;
@@ -181,7 +181,7 @@ my $client_pid;
     is($data->{'paging_metadata'}->{'pageNumber'}, 2,
         'On page two of the results');
 
-    my $uri = URI->new($client_base.'/domains');
+    $uri = URI->new($client_base.'/domains');
     $uri->query_form(name => '10*in-addr.arpa',
                      sort => 'name');
     $res = $ua->get($uri->as_string());
@@ -206,7 +206,7 @@ my $client_pid;
     is($results[1]->{'ldhName'}, '103.in-addr.arpa',
         'Second result has correct ldhName');
 
-    my $uri = URI->new($client_base.'/domains');
+    $uri = URI->new($client_base.'/domains');
     $uri->query_form(name => '10*in-addr.arpa',
                      sort => 'name:d');
     $res = $ua->get($uri->as_string());
@@ -219,7 +219,7 @@ my $client_pid;
     is($results[1]->{'ldhName'}, '108.in-addr.arpa',
         'Second result has correct ldhName');
 
-    my $uri = URI->new($client_base.'/domains');
+    $uri = URI->new($client_base.'/domains');
     $uri->query_form(name => '10*in-addr.arpa',
                      sort => 'lastChangedDate:d');
     $res = $ua->get($uri->as_string());
@@ -240,7 +240,7 @@ my $client_pid;
     is($lc1->{'eventDate'}, '2099-01-01T00:00:00Z',
         'Got correct second last-changed event date');
 
-    my $uri = URI->new($client_base.'/entities');
+    $uri = URI->new($client_base.'/entities');
     $uri->query_form(fn   => 'Test * User',
                      sort => 'fn');
     $res = $ua->get($uri->as_string());
@@ -257,7 +257,7 @@ my $client_pid;
     is($results[1]->{'handle'}, 'TP199-AP',
         'Got correct second record (handle)');
 
-    my $uri = URI->new($client_base.'/entities');
+    $uri = URI->new($client_base.'/entities');
     $uri->query_form(fn   => 'Test * User',
                      sort => 'cc:d');
     $res = $ua->get($uri->as_string());
@@ -274,7 +274,7 @@ my $client_pid;
     is($results[1]->{'vcardArray'}->[1]->[4]->[1]->{'cc'}, '198',
         'Got correct second record (cc)');
 
-    my $uri = URI->new($client_base.'/entities');
+    $uri = URI->new($client_base.'/entities');
     $uri->query_form(fn   => 'Test * User',
                      sort => 'voice:a');
     $res = $ua->get($uri->as_string());
@@ -291,7 +291,7 @@ my $client_pid;
     is($results[1]->{'vcardArray'}->[1]->[2]->[3], '+61-0000-0101',
         'Got correct second record (phone)');
 
-    my $uri = URI->new($client_base.'/entities');
+    $uri = URI->new($client_base.'/entities');
     $uri->query_form(fn   => 'Test * User',
                      sort => 'city');
     $res = $ua->get($uri->as_string());
@@ -307,6 +307,26 @@ my $client_pid;
         'Got correct second record (handle)');
     is($results[1]->{'vcardArray'}->[1]->[4]->[3]->[3], '101',
         'Got correct second record (city)');
+
+    $uri = URI->new($client_base.'/entities');
+    $uri->query_form(fn    => 'Test * User',
+                     sort  => 'city',
+                     count => 'true');
+    $res = $ua->get($uri->as_string());
+    ok($res->is_success(), 'Got paged search results');
+    my $data = decode_json($res->content());
+    ok((not exists $res->{'paging_metadata'}->{'totalCount'}),
+        'totalCount included when count parameter is true');
+
+    $uri = URI->new($client_base.'/entities');
+    $uri->query_form(fn    => 'Test * User',
+                     sort  => 'city',
+                     count => 'false');
+    $res = $ua->get($uri->as_string());
+    ok($res->is_success(), 'Got paged search results');
+    my $data = decode_json($res->content());
+    ok((not exists $res->{'paging_metadata'}->{'totalCount'}),
+        'totalCount omitted when count parameter is false');
 
     my $res2 = $ua->post($server_base.'/shutdown');
     waitpid($pid, 0);

@@ -5,6 +5,7 @@ use strict;
 
 use Crypt::JWT qw(decode_jwt);
 use Crypt::PK::ECC;
+use Data::Dumper;
 use File::Slurp qw(read_file write_file);
 use File::Temp qw(tempdir);
 use JSON::XS qw(decode_json encode_json);
@@ -14,7 +15,7 @@ use APNIC::RDAP::RMP::Client;
 use APNIC::RDAP::RMP::Server;
 use APNIC::RDAP::RMP::Serial qw(new_serial);
 
-use Test::More tests => 16;
+use Test::More tests => 14;
 
 my $pid;
 my $client_pid;
@@ -186,15 +187,17 @@ my $client_pid;
     $res = $ua->post($client_base.'/refresh');
     ok($res->is_success(), 'Refreshed client successfully');
 
-    my $uri = URI->new($client_base.'/domains');
+    my $uri = URI->new($client_base.'/domains/reverse/entity');
     $uri->query_form(
-        entityHandle => encode_json({
-            value => "TP*",
-            role  => "registrant"
-        })
+        handle => 'TP*',
+        role   => 'registrant'
     );
     $res = $ua->get($uri);
-    ok($res->is_success(), 'Domain search completed successfully');
+    my $tr = ok($res->is_success(), 'Domain search completed successfully');
+    if (not $tr) {
+        warn Dumper($res);
+    }
+
     my $data = decode_json($res->content());
     is($data->{'domainSearchResults'}->[0]->{'ldhName'},
         '100.in-addr.arpa',
@@ -202,22 +205,18 @@ my $client_pid;
     is(@{$data->{'domainSearchResults'}}, 1,
         'Got correct number of results');
 
-    $uri = URI->new($client_base.'/domains');
+    $uri = URI->new($client_base.'/domains/reverse/entity');
     $uri->query_form(
-        entityFn => encode_json({
-            value => "Citizen*",
-        })
+        fn => 'Citizen*'
     );
     $res = $ua->get($uri);
     ok($res->is_success(), 'Domain search completed successfully');
     $data = decode_json($res->content());
     is(@{$data->{'domainSearchResults'}}, 0, 'No results found');
 
-    $uri = URI->new($client_base.'/domains');
+    $uri = URI->new($client_base.'/domains/reverse/entity');
     $uri->query_form(
-        entityFn => encode_json({
-            value => "John*",
-        })
+        fn => 'John*'
     );
     $res = $ua->get($uri);
     ok($res->is_success(), 'Domain search completed successfully');
@@ -231,12 +230,10 @@ my $client_pid;
                   101.in-addr.arpa)],
             'Got correct set of search results');
 
-    $uri = URI->new($client_base.'/domains');
+    $uri = URI->new($client_base.'/domains/reverse/entity');
     $uri->query_form(
-        entityEmail => encode_json({
-            value => 'joe.user@example.com',
-            role  => 'technical',
-        })
+        role  => 'technical',
+        email => 'joe.user@example.com'
     );
     $res = $ua->get($uri);
     ok($res->is_success(), 'Domain search completed successfully');
@@ -249,45 +246,16 @@ my $client_pid;
               [qw(101.in-addr.arpa)],
             'Got correct set of search results');
 
-    $uri = URI->new($client_base.'/domains');
+    $uri = URI->new($client_base.'/domains/reverse/entity');
     $uri->query_form(
-        entityAddr => encode_json({
-            value => {
-                'street' => 'street',
-            },
-            role  => 'technical',
-        })
+        email => [ 'joe.user@example.com',
+                   'some.other.email@example.com' ]
     );
     $res = $ua->get($uri);
     ok($res->is_success(), 'Domain search completed successfully');
     $data = decode_json($res->content());
-    @names =
-        sort
-        map { $_->{'ldhName'} }
-            @{$data->{'domainSearchResults'}};
-    is_deeply(\@names,
-              [qw(101.in-addr.arpa)],
-            'Got correct set of search results');
-
-    $uri = URI->new($client_base.'/domains');
-    $uri->query_form(
-        entityAddr => encode_json({
-            value => {
-                'postcode' => '12*',
-            },
-        })
-    );
-    $res = $ua->get($uri);
-    ok($res->is_success(), 'Domain search completed successfully');
-    $data = decode_json($res->content());
-    @names =
-        sort
-        map { $_->{'ldhName'} }
-            @{$data->{'domainSearchResults'}};
-    is_deeply(\@names,
-              [qw(100.in-addr.arpa
-                  101.in-addr.arpa)],
-            'Got correct set of search results');
+    is_deeply($data->{'domainSearchResults'}, [],
+        'No entity matches two different email addresses');
 
     my $res2 = $ua->post($server_base.'/shutdown');
     waitpid($pid, 0);

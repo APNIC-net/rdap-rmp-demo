@@ -27,6 +27,23 @@ my %OBJECT_CLASS_NAME_TO_PATH = (
     'entity'     => 'entity',
 );
 
+my %REVERSE_TYPES =
+    map { $_ => 1 }
+        qw(domains
+           nameservers
+           entities);
+
+my %OBJECT_PATHS = reverse %OBJECT_CLASS_NAME_TO_PATH;
+my %RELATED_TYPES =
+    map { $_ => 1 }
+        keys %OBJECT_PATHS;
+
+my %REVERSE_TYPE_TO_OBJECT_TYPE = (
+    domains     => 'domain',
+    nameservers => 'nameserver',
+    entities    => 'entity',
+);
+
 my $MAX_SERIAL = (2 ** 32) - 1;
 
 our $VERSION = '0.1';
@@ -55,6 +72,14 @@ sub new
     bless $self, $class;
     $self->{"db"} = {};
     return $self;
+}
+
+sub _values_match
+{
+    my ($argument, $value) = @_;
+
+    $argument =~ s/\*/\.\*/g;
+    return ($value =~ /^$argument$/) ? 1 : 0;
 }
 
 sub _adjust_links
@@ -630,48 +655,58 @@ my %ADR_MAP = (
     cc     => 6
 );
 
-sub _search_domains
+sub _search_reverse
 {
     my ($self, $r) = @_;
 
+    my $path = $r->uri()->path();
     my %query_form = $r->uri()->query_form();
 
-    my $search_arg_original;
-    my ($type, $value, $role);
-    if ($search_arg_original = $query_form{'entityHandle'}) {
-        my $search_arg = decode_json($search_arg_original);
-        $type = 'handle';
-        $value = $search_arg->{'value'};
-        $role = $search_arg->{'role'};
-        $value =~ s/\*/.*/g;
-    } elsif ($search_arg_original = $query_form{'entityFn'}) {
-        my $search_arg = decode_json($search_arg_original);
-        $type = 'fn';
-        $value = $search_arg->{'value'};
-        $role = $search_arg->{'role'};
-        $value =~ s/\*/.*/g;
-    } elsif ($search_arg_original = $query_form{'entityEmail'}) {
-        my $search_arg = decode_json($search_arg_original);
-        $type = 'email';
-        $value = $search_arg->{'value'};
-        $role = $search_arg->{'role'};
-        $value =~ s/\*/.*/g;
-    } elsif ($search_arg_original = $query_form{'entityAddr'}) {
-        my $search_arg = decode_json($search_arg_original);
-        $type = 'addr';
-        $value = $search_arg->{'value'};
-        $role = $search_arg->{'role'};
-        for my $key (keys %{$value}) {
-            $value->{$key} =~ s/\*/.*/g;
-        }
-    } else {
+    my ($search_type, $related_type) =
+        ($path =~ /^\/(.*?)\/reverse\/(.*)/);
+    if (not $REVERSE_TYPES{$search_type}) {
+        warn "Reverse search object type is invalid.";
         return HTTP::Response->new(HTTP_BAD_REQUEST);
+    }
+    if (not $RELATED_TYPES{$related_type}) {
+        warn "Reverse search related object type is invalid.";
+        return HTTP::Response->new(HTTP_BAD_REQUEST);
+    }
+    if ($related_type ne 'entity') {
+        warn "The only supported related type is 'entity'.";
+        return HTTP::Response->new(HTTP_BAD_REQUEST);
+    }
+    my $search_object_type =
+        $REVERSE_TYPE_TO_OBJECT_TYPE{$search_type};
+
+    my @role_args;
+    if (defined $query_form{'role'}) {
+        @role_args = $query_form{'role'};
+        if (ref $role_args[0]) {
+            @role_args = @{$role_args[0]};
+        }
+    }
+    my $handle_arg = $query_form{'handle'};
+    my @fn_args;
+    if (defined $query_form{'fn'}) {
+        @fn_args = $query_form{'fn'};
+        if (ref $fn_args[0]) {
+            @fn_args = @{$fn_args[0]};
+        }
+    }
+    my @email_args;
+    if (defined $query_form{'email'}) {
+        @email_args = $query_form{'email'};
+        if (ref $email_args[0]) {
+            @email_args = @{$email_args[0]};
+        }
     }
 
     my @results;
-    DOMAIN: for my $domain_path (values %{$self->{'db'}->{'domain'}}) {
-        my $domain_obj = decode_json(read_file($domain_path));
-        my $entities = $domain_obj->{'entities'};
+    OBJECT: for my $object_path
+            (values %{$self->{'db'}->{$search_object_type}}) {
+        my $obj = decode_json(read_file($object_path));
+        my $entities = $obj->{'entities'};
         if (not $entities) {
             next;
         }
@@ -680,61 +715,69 @@ sub _search_domains
             my $entity_path = $self->{'db'}->{'entities'}->{$handle};
             my $entity_obj = decode_json(read_file($entity_path));
             my $roles = $entity->{'roles'} || $entity_obj->{'roles'};
-            if ($role and not (grep { $_ eq $role } @{$roles || []})) {
-                next;
-            }
-            if ($type eq 'handle') {
-                if ($entity_obj->{'handle'} !~ /^$value$/) {
-                    next;
-                }
-            } elsif ($type eq 'fn') {
-                my @fns =
-                    grep { ($_->[0] eq 'fn')
-                            and ($_->[3] =~ /^$value$/) }
-                        @{$entity_obj->{'vcardArray'}->[1]};
-                if (not @fns) {
-                    next;
-                }
-            } elsif ($type eq 'email') {
-                my @emails =
-                    grep { ($_->[0] eq 'email')
-                            and ($_->[3] =~ /^$value$/) }
-                        @{$entity_obj->{'vcardArray'}->[1]};
-                if (not @emails) {
-                    next;
-                }
-            } elsif ($type eq 'addr') {
-                my @adrs =
-                    grep { $_->[0] eq 'adr' }
-                        @{$entity_obj->{'vcardArray'}->[1]};
-                my $found_adr = 0;
-                ADR: for my $adr (@adrs) {
-                    for my $adr_type (keys %ADR_MAP) {
-                        if (not exists $value->{$adr_type}) {
-                            next;
-                        }
-                        my $index = $ADR_MAP{$adr_type};
-                        my $pattern = $value->{$adr_type};
-                        if ($adr->[3]->[$index] !~ /^$pattern$/) {
-                            next ADR;
+            if (@role_args) {
+                my $ok = 0;
+                ROLE: for my $role (@{$roles || []}) {
+                    for my $role_arg (@role_args) {
+                        if (_values_match($role_arg, $role)) {
+                            $ok = 1;
+                            last ROLE;
                         }
                     }
-                    $found_adr = 1;
-                    last;
                 }
-                if (not $found_adr) {
+                if (not $ok) {
                     next;
                 }
             }
-
-            push @results, $domain_obj;
-            next DOMAIN;
+            if (defined $handle_arg) {
+                if (not _values_match($handle_arg, $entity_obj->{'handle'})) {
+                    next;
+                }
+            }
+            if (@fn_args) {
+                my $ok = 0;
+                my @fns =
+                    map  { $_->[3] }
+                    grep { $_->[0] eq 'fn' }
+                        @{$entity_obj->{'vcardArray'}->[1]};
+                FN: for my $fn (@fns) {
+                    for my $fn_arg (@fn_args) {
+                        if (_values_match($fn_arg, $fn)) {
+                            $ok = 1;
+                            last FN;
+                        }
+                    }
+                }
+                if (not $ok) {
+                    next;
+                }
+            }
+            if (@email_args) {
+                my $ok = 0;
+                my @emails =
+                    map  { $_->[3] }
+                    grep { $_->[0] eq 'email' }
+                        @{$entity_obj->{'vcardArray'}->[1]};
+                EMAIL: for my $email (@emails) {
+                    for my $email_arg (@email_args) {
+                        if (_values_match($email_arg, $email)) {
+                            $ok = 1;
+                            last EMAIL;
+                        }
+                    }
+                }
+                if (not $ok) {
+                    next;
+                }
+            }
+            push @results, $obj;
+            next OBJECT;
         }
     }
 
     my $response_data = encode_json({
         rdapConformance => ["rdap_level_0"],
-        domainSearchResults => [
+        $search_object_type.'SearchResults' => [
             map { my $obj = clone($_);
                   delete $obj->{'rdapConformance'};
                   $obj }
@@ -795,8 +838,8 @@ sub run
                         $res = $self->_get_domain($r);
                     } elsif ($path =~ /\/nameserver\/.*/) {
                         $res = $self->_get_nameserver($r);
-                    } elsif ($path eq '/domains') {
-                        $res = $self->_search_domains($r);
+                    } elsif ($path =~ /^\/.*?\/reverse\//) {
+                        $res = $self->_search_reverse($r);
                     }
                 }
                 if ($res) {

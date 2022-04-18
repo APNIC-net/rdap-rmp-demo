@@ -15,7 +15,7 @@ use APNIC::RDAP::RMP::Client;
 use APNIC::RDAP::RMP::Server;
 use APNIC::RDAP::RMP::Serial qw(new_serial);
 
-use Test::More tests => 14;
+use Test::More tests => 16;
 
 my $pid;
 my $client_pid;
@@ -126,6 +126,31 @@ my $client_pid;
               href => 'https://example.com/entity/TP138-AP' }
         ]
     }));
+    write_file("$object_path/entity/TP139-AP", encode_json({
+        rdapConformance => ['rdap_level_0'],
+        objectClassName => 'entity',
+        handle          => 'TP139-AP',
+        vcardArray      => [
+            'vcard',
+            [
+                [ "version", {}, "text", "4.0" ],
+                [ "fn", {}, "text", "Jim Citizen" ],
+                [ "fn", {}, "text", "Jim Citizen 2" ],
+                [ "kind", {}, "text", "individual" ],
+                [ "adr", {
+                    "label" => "blah st\nAU\n"
+                  },
+                  "text",
+                  [ "PO box", "ext address", "road", "locality", "region",
+                    "1234", "australia" ] ],
+                [ "email", {}, "text", "john.citizen\@example.com" ]
+            ]
+        ],
+        links           => [
+            { rel  => 'self',
+              href => 'https://example.com/entity/TP139-AP' }
+        ]
+    }));
 
     write_file("$object_path/domain/100.in-addr.arpa", encode_json({
         rdapConformance => ['rdap_level_0'],
@@ -175,6 +200,24 @@ my $client_pid;
                   { rel => 'self',
                     href => 'https://example.com/entity/TP138-AP' }
               ] }
+        ],
+    }));
+    write_file("$object_path/domain/102.in-addr.arpa", encode_json({
+        rdapConformance => ['rdap_level_0'],
+        objectClassName => 'domain',
+        ldhName         => '102.in-addr.arpa',
+        links           => [
+            { rel  => 'self',
+              href => 'https://example.com/domain/102.in-addr.arpa' }
+        ],
+        entities        => [
+            { objectClassName => 'entity',
+              handle          => 'TP139-AP',
+              roles           => [ 'technical' ],
+              links           => [
+                  { rel => 'self',
+                    href => 'https://example.com/entity/TP139-AP' }
+              ] },
         ],
     }));
 
@@ -256,6 +299,22 @@ my $client_pid;
     $data = decode_json($res->content());
     is_deeply($data->{'domainSearchResults'}, [],
         'No entity matches two different email addresses');
+
+    $uri = URI->new($client_base.'/domains/reverse/entity');
+    $uri->query_form(
+        fn => [ 'Jim Citizen',
+                'Jim Citizen 2' ]
+    );
+    $res = $ua->get($uri);
+    ok($res->is_success(), 'Domain search completed successfully');
+    $data = decode_json($res->content());
+    @names =
+        sort
+        map { $_->{'ldhName'} }
+            @{$data->{'domainSearchResults'}};
+    is_deeply(\@names,
+              [qw(102.in-addr.arpa)],
+            'Got correct set of search results');
 
     my $res2 = $ua->post($server_base.'/shutdown');
     waitpid($pid, 0);

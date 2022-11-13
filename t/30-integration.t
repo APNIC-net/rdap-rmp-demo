@@ -64,17 +64,27 @@ my $client_pid;
     my $client_base = $client->{'url_base'};
 
     if (not ($pid = fork())) {
-        local(*STDERR);
-        open(STDERR, ">/dev/null");
-        $server->run();
-        exit();
+        if (not $ENV{'APNIC_DEBUG'}) {
+            local(*STDERR);
+            open(STDERR, ">/dev/null");
+            $server->run();
+            exit();
+        } else {
+            $server->run();
+            exit();
+        }
     }
 
     if (not ($client_pid = fork())) {
-        local(*STDERR);
-        open(STDERR, ">/dev/null");
-        $client->run();
-        exit();
+        if (not $ENV{'APNIC_DEBUG'}) {
+            local(*STDERR);
+            open(STDERR, ">/dev/null");
+            $client->run();
+            exit();
+        } else {
+            $client->run();
+            exit();
+        }
     }
 
     write_file("$object_path/entity/TP137-AP", encode_json({

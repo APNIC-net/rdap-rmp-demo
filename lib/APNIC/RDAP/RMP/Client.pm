@@ -13,7 +13,8 @@ use HTTP::Status qw(:constants);
 use JSON::XS qw(decode_json encode_json);
 use List::Util qw(first);
 use LWP::UserAgent;
-use Net::IP::XS;
+use Net::IP::XS qw($IP_A_IN_B_OVERLAP
+                   $IP_NO_OVERLAP);
 use Net::Patricia;
 use Set::IntervalTree;
 
@@ -31,7 +32,9 @@ my %REVERSE_TYPES =
     map { $_ => 1 }
         qw(domains
            nameservers
-           entities);
+           entities
+           autnums
+           ips);
 
 my %OBJECT_PATHS = reverse %OBJECT_CLASS_NAME_TO_PATH;
 my %RELATED_TYPES =
@@ -42,6 +45,8 @@ my %REVERSE_TYPE_TO_OBJECT_TYPE = (
     domains     => 'domain',
     nameservers => 'nameserver',
     entities    => 'entity',
+    ips         => 'ip',
+    autnums     => 'autnum',
 );
 
 my $MAX_SERIAL = (2 ** 32) - 1;
@@ -173,16 +178,20 @@ sub _add_object
             die "Invalid startAddress/endAddress";
         }
         $tree->add_string($net_ip->prefix(), \$path);
+        $db->{'ip'}->{$net_ip->prefix()} = $path;
     } elsif ($object_class_name eq 'autnum') {
         if (not exists $object_data->{'startAutnum'}
                 or not exists $object_data->{'endAutnum'}) {
             die "No startAutnum/endAutnum";
         }
-        $db->{'autnum'}->insert(
+        $db->{'autnum_tree'}->insert(
             $path,
             $object_data->{'startAutnum'},
             $object_data->{'endAutnum'}+1
         );
+        my $key = $object_data->{'startAutnum'}.'-'.
+                  $object_data->{'endAutnum'};
+        $db->{'autnum'}->{$key} = $path;
     } elsif ($object_class_name eq 'domain') {
         $db->{'domain'}->{$object_data->{'ldhName'}} = $path;
     } elsif ($object_class_name eq 'nameserver') {
@@ -222,11 +231,15 @@ sub _remove_object
                 ? $db->{'ipv4'}
                 : $db->{'ipv6'};
         $tree->remove_string($prefix);
+        delete $db->{'ip'}->{$net_ip->prefix()};
     } elsif ($object_class_name eq 'autnum') {
-        $db->{'autnum'}->remove(
+        $db->{'autnum_tree'}->remove(
             $object_data->{'startAutnum'},
             $object_data->{'endAutnum'}+1,
         );
+        my $key = $object_data->{'startAutnum'}.'-'.
+                  $object_data->{'endAutnum'};
+        delete $db->{'autnum'}->{$key};
     } elsif ($object_class_name eq 'domain') {
         delete $db->{'domain'}->{$object_data->{'ldhName'}};
     } elsif ($object_class_name eq 'nameserver') {
@@ -286,7 +299,7 @@ sub _apply_snapshot
         id_to_used_links => {},
         ipv4             => Net::Patricia->new(AF_INET),
         ipv6             => Net::Patricia->new(AF_INET6),
-        autnum           => Set::IntervalTree->new(),
+        autnum_tree      => Set::IntervalTree->new(),
         domain           => {},
         nameserver       => {},
     );
@@ -545,6 +558,28 @@ sub _get_entity
     return HTTP::Response->new(HTTP_OK, undef, [], $data);
 }
 
+sub _annotate_ip
+{
+    my ($self, $ip_obj) = @_;
+
+    my $net_ip = Net::IP::XS->new($ip_obj->{'startAddress'}.'-'.
+                                  $ip_obj->{'endAddress'});
+    if ($self->_get_ip_up_object($net_ip->prefix())) {
+        push @{$ip_obj->{'links'}},
+             { rel  => 'up',
+               href => $self->{'url_base'}.'/ip-up/'.$net_ip->prefix() };
+    }
+    if (my $objs = $self->_get_ip_down_objects($net_ip->prefix())) {
+        if (@{$objs}) {
+            push @{$ip_obj->{'links'}},
+                 { rel  => 'down',
+                   href => $self->{'url_base'}.'/ip-down/'.$net_ip->prefix() };
+        }
+    }
+
+    return 1;
+}
+
 sub _get_ip
 {
     my ($self, $r) = @_;
@@ -570,7 +605,193 @@ sub _get_ip
     }
 
     my $data = read_file($$res);
+    my $obj = decode_json($data);
+    $self->_annotate_ip($obj);
+
     return HTTP::Response->new(HTTP_OK, undef, [], $data);
+}
+
+sub _get_ip_up_object
+{
+    my ($self, $ip) = @_;
+
+    my $search_net_ip = Net::IP::XS->new($ip);
+    my @less_specific;
+    for my $object_path (values %{$self->{'db'}->{'ip'}}) {
+        my $obj_data = read_file($object_path); 
+        my $obj = decode_json($obj_data);
+        my $net_ip =
+            Net::IP::XS->new(
+                $obj->{'startAddress'}.'-'.
+                $obj->{'endAddress'}
+            );
+        my $overlap = $search_net_ip->overlaps($net_ip);
+        if ($overlap == $IP_A_IN_B_OVERLAP) {
+            push @less_specific, [ $obj, $net_ip ];
+        }
+    }
+
+    if (not @less_specific) {
+        return;
+    }
+
+    my @next_least_specific =
+        map  { $_->[0] }
+        sort { $a->[1]->size() <=> $b->[1]->size() }
+            @less_specific;
+
+    return $next_least_specific[0];
+}
+
+sub _get_ip_down_objects
+{
+    my ($self, $ip) = @_;
+
+    my $search_net_ip = Net::IP::XS->new($ip);
+    my @more_specific;
+    for my $object_path (values %{$self->{'db'}->{'ip'}}) {
+        my $obj_data = read_file($object_path); 
+        my $obj = decode_json($obj_data);
+        my $net_ip =
+            Net::IP::XS->new(
+                $obj->{'startAddress'}.'-'.
+                $obj->{'endAddress'}
+            );
+        my $overlap = $net_ip->overlaps($search_net_ip);
+        if ($overlap == $IP_A_IN_B_OVERLAP) {
+            push @more_specific, [ $obj, $net_ip ];
+        }
+    }
+
+    my @next_most_specific =
+        sort { ($b->[1]->size() <=> $a->[1]->size())
+                || ($a->[1]->intip() <=> $b->[1]->intip()) }
+            @more_specific;
+
+    my @results;
+    NMS: for my $nms (@next_most_specific) {
+        for my $r (@results) {
+            my $overlap = $nms->[1]->overlaps($r->[1]);
+            if ($overlap != $IP_NO_OVERLAP) {
+                next NMS;
+            }
+        }
+        push @results, $nms;
+    }
+
+    return [ map { $_->[0] } @results ];
+}
+
+sub _get_ip_up
+{
+    my ($self, $r) = @_;
+
+    my $path = $r->uri()->path();
+    my ($ip) = ($path =~ /\/ip-up\/(.+)/);
+    if (not $ip) {
+        return HTTP::Response->new(HTTP_BAD_REQUEST);
+    }
+
+    my $obj = $self->_get_ip_up_object($ip);
+    if (not $obj) {
+        return;
+    }
+
+    $self->_annotate_ip($obj);
+
+    return HTTP::Response->new(HTTP_OK, undef, [],
+                               encode_json($obj));
+}
+
+sub _get_ip_down
+{
+    my ($self, $r) = @_;
+
+    my $path = $r->uri()->path();
+    my ($ip) = ($path =~ /\/ip-down\/(.+)/);
+    if (not $ip) {
+        return HTTP::Response->new(HTTP_BAD_REQUEST);
+    }
+
+    my $objs = $self->_get_ip_down_objects($ip);
+
+    my $response_data = encode_json({
+        rdapConformance => ["rdap_level_0"],
+        'ipSearchResults' => [
+            map { my $obj = clone($_);
+                  delete $obj->{'rdapConformance'};
+                  $self->_annotate_ip($obj);
+                  $obj }
+                @{$objs}
+        ]
+    });
+
+    return HTTP::Response->new(HTTP_OK, [], undef,
+                               $response_data);
+}
+
+sub _get_ips
+{
+    my ($self, $r) = @_;
+
+    my $db = $self->{'db'};
+    my %query_form = $r->uri()->query_form();
+
+    my $field;
+    my $search_arg;
+    if ($search_arg = $query_form{'name'}) {
+        $field = 'name';
+    } elsif ($search_arg = $query_form{'handle'}) {
+        $field = 'handle';
+    } else {
+        return HTTP::Response->new(HTTP_BAD_REQUEST);
+    }
+
+    my @results;
+    for my $object_path (values %{$self->{'db'}->{'ip'}}) {
+        my $obj = decode_json(read_file($object_path));
+        if (_values_match($search_arg, $obj->{$field})) {
+            push @results, $obj;
+        }
+    }
+
+    my $response_data = encode_json({
+        rdapConformance => ["rdap_level_0"],
+        'ipSearchResults' => [
+            map { my $obj = clone($_);
+                  delete $obj->{'rdapConformance'};
+                  $self->_annotate_ip($obj);
+                  $obj }
+                @results
+        ]
+    });
+
+    return HTTP::Response->new(HTTP_OK, [], undef,
+                               $response_data);
+}
+
+sub _annotate_autnum
+{
+    my ($self, $autnum_obj) = @_;
+
+    my $start = $autnum_obj->{'startAutnum'};
+    my $end = $autnum_obj->{'endAutnum'};
+    my $key = "$start-$end";
+
+    if ($self->_get_autnum_up_object($start, $end)) {
+        push @{$autnum_obj->{'links'}},
+             { rel  => 'up',
+               href => $self->{'url_base'}.'/autnum-up/'.$key };
+    }
+    if (my $objs = $self->_get_autnum_down_objects($start, $end)) {
+        if (@{$objs}) {
+            push @{$autnum_obj->{'links'}},
+                 { rel  => 'down',
+                   href => $self->{'url_base'}.'/autnum-down/'.$key };
+        }
+    }
+
+    return 1;
 }
 
 sub _get_autnum
@@ -585,7 +806,7 @@ sub _get_autnum
         return HTTP::Response->new(HTTP_BAD_REQUEST);
     }
 
-    my $tree = $db->{'autnum'};
+    my $tree = $db->{'autnum_tree'};
     my @results =
         map { decode_json(read_file($_)) }
             @{$tree->fetch($autnum, $autnum + 1)};
@@ -599,8 +820,352 @@ sub _get_autnum
             @results;
     my $smallest = $ordered[0];
 
+    $self->_annotate_autnum($smallest);
+
     return HTTP::Response->new(HTTP_OK, undef, [],
                                encode_json($smallest));
+}
+
+sub _get_autnum_up_object
+{
+    my ($self, $start, $end) = @_;
+
+    my @less_specific;
+    warn "asn up start";
+    for my $object_path (values %{$self->{'db'}->{'autnum'}}) {
+        my $obj_data = read_file($object_path); 
+        my $obj = decode_json($obj_data);
+        my $obj_start = $obj->{'startAutnum'};
+        my $obj_end = $obj->{'endAutnum'};
+        if (($obj_start <= $start) and ($obj_end >= $end)
+                and not ($obj_start == $start and $obj_end == $end)) {
+            push @less_specific, [ $obj, $obj_end - $obj_start + 1 ];
+        }
+    }
+    warn "asn up end";
+
+    if (not @less_specific) {
+        return;
+    }
+
+    my @next_least_specific =
+        map  { $_->[0] }
+        sort { $a->[1] <=> $b->[1] }
+            @less_specific;
+
+    return $next_least_specific[0];
+}
+
+sub _get_autnum_down_objects
+{
+    my ($self, $start, $end) = @_;
+
+    my @more_specific;
+    for my $object_path (values %{$self->{'db'}->{'autnum'}}) {
+        my $obj_data = read_file($object_path); 
+        my $obj = decode_json($obj_data);
+        my $obj_start = $obj->{'startAutnum'};
+        my $obj_end = $obj->{'endAutnum'};
+        if (($obj_start >= $start) and ($obj_end <= $end)
+                and not ($obj_start == $start and $obj_end == $end)) {
+            push @more_specific,
+                 [ $obj, $obj_start, $obj_end, $obj_end - $obj_start + 1 ];
+        }
+    }
+
+    my @next_most_specific =
+        sort { ($b->[3] <=> $a->[3])
+                || ($a->[1] <=> $b->[1]) }
+            @more_specific;
+
+    my @results;
+    NMS: for my $nms (@next_most_specific) {
+        my (undef, $nms_start, $nms_end, undef) = @{$nms};
+        for my $r (@results) {
+            my (undef, $r_start, $r_end, undef) = @{$r};
+            if (($nms_start >= $r_start)
+                    and ($nms_end <= $r_end)) {
+                next NMS;
+            }
+        }
+        push @results, $nms;
+    }
+
+    return [ map { $_->[0] } @results ];
+}
+
+sub _get_autnum_up
+{
+    my ($self, $r) = @_;
+
+    my $path = $r->uri()->path();
+    my ($start, $end) = ($path =~ /\/autnum-up\/(.+)-(.+)/);
+    if (not $start) {
+        return HTTP::Response->new(HTTP_BAD_REQUEST);
+    }
+
+    my $obj = $self->_get_autnum_up_object($start, $end);
+    if (not $obj) {
+        return;
+    }
+
+    $self->_annotate_autnum($obj);
+
+    return HTTP::Response->new(HTTP_OK, undef, [],
+                               encode_json($obj));
+}
+
+sub _get_autnum_down
+{
+    my ($self, $r) = @_;
+
+    my $path = $r->uri()->path();
+    my ($start, $end) = ($path =~ /\/autnum-down\/(.+)-(.+)/);
+    if (not $start) {
+        return HTTP::Response->new(HTTP_BAD_REQUEST);
+    }
+
+    my $objs = $self->_get_autnum_down_objects($start, $end);
+
+    my $response_data = encode_json({
+        rdapConformance => ["rdap_level_0"],
+        'autnumSearchResults' => [
+            map { my $obj = clone($_);
+                  delete $obj->{'rdapConformance'};
+                  $self->_annotate_autnum($obj);
+                  $obj }
+                @{$objs}
+        ]
+    });
+
+    return HTTP::Response->new(HTTP_OK, [], undef,
+                               $response_data);
+}
+
+sub _get_autnums
+{
+    my ($self, $r) = @_;
+
+    my $db = $self->{'db'};
+    my %query_form = $r->uri()->query_form();
+
+    my $field;
+    my $search_arg;
+    if ($search_arg = $query_form{'name'}) {
+        $field = 'name';
+    } elsif ($search_arg = $query_form{'handle'}) {
+        $field = 'handle';
+    } else {
+        return HTTP::Response->new(HTTP_BAD_REQUEST);
+    }
+
+    my @results;
+    for my $object_path (values %{$self->{'db'}->{'autnum'}}) {
+        my $obj = decode_json(read_file($object_path));
+        if (_values_match($search_arg, $obj->{$field})) {
+            push @results, $obj;
+        }
+    }
+
+    my $response_data = encode_json({
+        rdapConformance => ["rdap_level_0"],
+        'autnumSearchResults' => [
+            map { my $obj = clone($_);
+                  delete $obj->{'rdapConformance'};
+                  $obj }
+                @results
+        ]
+    });
+
+    return HTTP::Response->new(HTTP_OK, [], undef,
+                               $response_data);
+}
+
+sub ipv4_arpa_to_prefix
+{
+    my ($arpa) = @_;
+
+    my ($num_str) = ($arpa =~ /^(.*)\.in-addr\.arpa/i);
+    my @nums = reverse split /\./, $num_str;
+    my $prefix_len = @nums * 8;
+    while (@nums < 4) {
+        push @nums, 0;
+    }
+    use Data::Dumper;
+    warn Dumper(\@nums);
+
+    return (join '.', @nums).'/'.$prefix_len;
+}
+
+sub ipv6_arpa_to_prefix
+{
+    my ($arpa) = @_;
+
+    my ($nums) = ($arpa =~ /^(.*)\.ip6\.arpa/i);
+    $nums =~ s/\.//g;
+    my $len = (length $nums);
+    my $prefix_len = $len * 4;
+    $nums = reverse $nums;
+    $nums .= '0' x (4 - (($len % 4) || 4));
+    my $addr = join ':', ($nums =~ /(.{4})/g);
+    if ((length $addr) < 39) {
+        $addr .= '::';
+    }
+    $addr .= '/'.$prefix_len;
+    return $addr;
+}
+
+sub arpa_to_prefix
+{
+    my ($arpa) = @_;
+
+    return
+        Net::IP::XS->new(
+            ($arpa =~ /\.in-addr\.arpa/i) ? ipv4_arpa_to_prefix($arpa)
+          : ($arpa =~ /\.ip6\.arpa/i)     ? ipv6_arpa_to_prefix($arpa)
+                                          : die "Bad reverse domain: '$arpa'"
+        );
+}
+
+sub _domain_to_net_ip
+{
+    my ($self, $domain) = @_;
+
+    my $ldh_name = $domain->{'ldhName'};
+    my $prefix = arpa_to_prefix($ldh_name);
+    return $prefix;
+}
+
+sub _get_domain_up_object
+{
+    my ($self, $ldh_name) = @_;
+
+    my $search_net_ip = arpa_to_prefix($ldh_name);
+    my @less_specific;
+    for my $object_path (values %{$self->{'db'}->{'domain'}}) {
+        my $obj_data = read_file($object_path); 
+        my $obj = decode_json($obj_data);
+        my $net_ip = $self->_domain_to_net_ip($obj);
+        my $overlap = $search_net_ip->overlaps($net_ip);
+        if ($overlap == $IP_A_IN_B_OVERLAP) {
+            push @less_specific, [ $obj, $net_ip ];
+        }
+    }
+
+    if (not @less_specific) {
+        return;
+    }
+
+    my @next_least_specific =
+        map  { $_->[0] }
+        sort { $a->[1]->size() <=> $b->[1]->size() }
+            @less_specific;
+
+    return $next_least_specific[0];
+}
+
+sub _get_domain_down_objects
+{
+    my ($self, $ldh_name) = @_;
+
+    my $search_net_ip = arpa_to_prefix($ldh_name);
+    my @more_specific;
+    for my $object_path (values %{$self->{'db'}->{'domain'}}) {
+        my $obj_data = read_file($object_path); 
+        my $obj = decode_json($obj_data);
+        my $net_ip = $self->_domain_to_net_ip($obj);
+        my $overlap = $net_ip->overlaps($search_net_ip);
+        if ($overlap == $IP_A_IN_B_OVERLAP) {
+            push @more_specific, [ $obj, $net_ip ];
+        }
+    }
+
+    my @next_most_specific =
+        sort { ($b->[1]->size() <=> $a->[1]->size())
+                || ($a->[1]->intip() <=> $b->[1]->intip()) }
+            @more_specific;
+
+    my @results;
+    NMS: for my $nms (@next_most_specific) {
+        for my $r (@results) {
+            my $overlap = $nms->[1]->overlaps($r->[1]);
+            if ($overlap != $IP_NO_OVERLAP) {
+                next NMS;
+            }
+        }
+        push @results, $nms;
+    }
+
+    return [ map { $_->[0] } @results ];
+}
+
+sub _get_domain_up
+{
+    my ($self, $r) = @_;
+
+    my $path = $r->uri()->path();
+    my ($ldh_name) = ($path =~ /\/domain-up\/(.+)/);
+    if (not $ldh_name) {
+        return HTTP::Response->new(HTTP_BAD_REQUEST);
+    }
+
+    my $obj = $self->_get_domain_up_object($ldh_name);
+    if (not $obj) {
+        return;
+    }
+
+    $self->_annotate_domain($obj);
+
+    return HTTP::Response->new(HTTP_OK, undef, [],
+                               encode_json($obj));
+}
+
+sub _get_domain_down
+{
+    my ($self, $r) = @_;
+
+    my $path = $r->uri()->path();
+    my ($ldh_name) = ($path =~ /\/domain-down\/(.+)/);
+    if (not $ldh_name) {
+        return HTTP::Response->new(HTTP_BAD_REQUEST);
+    }
+
+    my $objs = $self->_get_domain_down_objects($ldh_name);
+
+    my $response_data = encode_json({
+        rdapConformance => ["rdap_level_0"],
+        'domainSearchResults' => [
+            map { my $obj = clone($_);
+                  delete $obj->{'rdapConformance'};
+                  $self->_annotate_domain($obj);
+                  $obj }
+                @{$objs}
+        ]
+    });
+
+    return HTTP::Response->new(HTTP_OK, [], undef,
+                               $response_data);
+}
+
+sub _annotate_domain
+{
+    my ($self, $domain_obj) = @_;
+
+    my $ldh_name = $domain_obj->{'ldhName'};
+    if ($self->_get_domain_up_object($ldh_name)) {
+        push @{$domain_obj->{'links'}},
+             { rel  => 'up',
+               href => $self->{'url_base'}.'/domain-up/'.$ldh_name };
+    }
+    if (my $objs = $self->_get_domain_down_objects($ldh_name)) {
+        if (@{$objs}) {
+            push @{$domain_obj->{'links'}},
+                 { rel  => 'down',
+                   href => $self->{'url_base'}.'/domain-down/'.$ldh_name };
+        }
+    }
+
+    return 1;
 }
 
 sub _get_domain
@@ -621,6 +1186,8 @@ sub _get_domain
 
     $path = $db->{'domain'}->{$domain};
     my $data = read_file($path);
+    my $obj = decode_json($data);
+    $self->_annotate_domain($obj);
 
     return HTTP::Response->new(HTTP_OK, undef, [], $data);
 }
@@ -828,6 +1395,7 @@ sub run
                         goto done;
                     }
                 } elsif ($method eq 'HEAD' or $method eq 'GET') {
+                    warn "HEAD/GET: $path";
                     if ($path =~ /\/entity\/.*/) {
                         $res = $self->_get_entity($r);
                     } elsif ($path =~ /\/ip\/.*/) {
@@ -840,6 +1408,22 @@ sub run
                         $res = $self->_get_nameserver($r);
                     } elsif ($path =~ /^\/.*?\/reverse\//) {
                         $res = $self->_search_reverse($r);
+                    } elsif ($path =~ /\/ip-up\/.*/) {
+                        $res = $self->_get_ip_up($r);
+                    } elsif ($path =~ /\/ip-down\/.*/) {
+                        $res = $self->_get_ip_down($r);
+                    } elsif ($path =~ /\/autnum-up\/.*/) {
+                        $res = $self->_get_autnum_up($r);
+                    } elsif ($path =~ /\/autnum-down\/.*/) {
+                        $res = $self->_get_autnum_down($r);
+                    } elsif ($path =~ /\/domain-up\/.*/) {
+                        $res = $self->_get_domain_up($r);
+                    } elsif ($path =~ /\/domain-down\/.*/) {
+                        $res = $self->_get_domain_down($r);
+                    } elsif ($path =~ /\/ips/) {
+                        $res = $self->_get_ips($r);
+                    } elsif ($path =~ /\/autnums/) {
+                        $res = $self->_get_autnums($r);
                     }
                 }
                 if ($res) {

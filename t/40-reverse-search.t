@@ -9,13 +9,14 @@ use Data::Dumper;
 use File::Slurp qw(read_file write_file);
 use File::Temp qw(tempdir);
 use JSON::XS qw(decode_json encode_json);
+use List::Util qw(first);
 use LWP::UserAgent;
 
 use APNIC::RDAP::RMP::Client;
 use APNIC::RDAP::RMP::Server;
 use APNIC::RDAP::RMP::Serial qw(new_serial);
 
-use Test::More tests => 16;
+use Test::More tests => 21;
 
 my $pid;
 my $client_pid;
@@ -230,7 +231,19 @@ my $client_pid;
     $res = $ua->post($client_base.'/refresh');
     ok($res->is_success(), 'Refreshed client successfully');
 
-    my $uri = URI->new($client_base.'/domains/reverse/entity');
+    my $uri = URI->new($client_base.'/help');
+    $res = $ua->get($uri);
+    ok($res->is_success(), 'Got help response');
+    my $data = decode_json($res->content());
+    my @rsps = @{$data->{'reverse_search_properties'}};
+    my $found_rsp =
+        first { $_->{'relatedResourceType'} eq 'entity'
+                    and $_->{'searchableResourceType'} eq 'domains'
+                    and $_->{'property'} eq 'fn' }
+            @rsps;
+    ok($found_rsp, 'Found one expected reverse search property');
+
+    $uri = URI->new($client_base.'/domains/reverse_search/entity');
     $uri->query_form(
         handle => 'TP*',
         role   => 'registrant'
@@ -241,14 +254,23 @@ my $client_pid;
         warn Dumper($res);
     }
 
-    my $data = decode_json($res->content());
+    $data = decode_json($res->content());
     is($data->{'domainSearchResults'}->[0]->{'ldhName'},
         '100.in-addr.arpa',
         'Got correct result in search results');
     is(@{$data->{'domainSearchResults'}}, 1,
         'Got correct number of results');
 
-    $uri = URI->new($client_base.'/domains/reverse/entity');
+    my @mappings =
+        sort { $a->{'property'} cmp $b->{'property'} }
+            @{$data->{'reverse_search_properties_mapping'}};
+    is(@mappings, 2, 'Got two mappings');
+    is($mappings[0]->{'property'}, 'handle',
+        'Handle mapping is present');
+    is($mappings[1]->{'property'}, 'role',
+        'Role handle is present');
+
+    $uri = URI->new($client_base.'/domains/reverse_search/entity');
     $uri->query_form(
         fn => 'Citizen*'
     );
@@ -257,7 +279,7 @@ my $client_pid;
     $data = decode_json($res->content());
     is(@{$data->{'domainSearchResults'}}, 0, 'No results found');
 
-    $uri = URI->new($client_base.'/domains/reverse/entity');
+    $uri = URI->new($client_base.'/domains/reverse_search/entity');
     $uri->query_form(
         fn => 'John*'
     );
@@ -273,7 +295,7 @@ my $client_pid;
                   101.in-addr.arpa)],
             'Got correct set of search results');
 
-    $uri = URI->new($client_base.'/domains/reverse/entity');
+    $uri = URI->new($client_base.'/domains/reverse_search/entity');
     $uri->query_form(
         role  => 'technical',
         email => 'joe.user@example.com'
@@ -289,7 +311,7 @@ my $client_pid;
               [qw(101.in-addr.arpa)],
             'Got correct set of search results');
 
-    $uri = URI->new($client_base.'/domains/reverse/entity');
+    $uri = URI->new($client_base.'/domains/reverse_search/entity');
     $uri->query_form(
         email => [ 'joe.user@example.com',
                    'some.other.email@example.com' ]
@@ -300,7 +322,7 @@ my $client_pid;
     is_deeply($data->{'domainSearchResults'}, [],
         'No entity matches two different email addresses');
 
-    $uri = URI->new($client_base.'/domains/reverse/entity');
+    $uri = URI->new($client_base.'/domains/reverse_search/entity');
     $uri->query_form(
         fn => [ 'Jim Citizen',
                 'Jim Citizen 2' ]

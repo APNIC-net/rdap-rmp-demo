@@ -663,7 +663,7 @@ sub _search_reverse
     my %query_form = $r->uri()->query_form();
 
     my ($search_type, $related_type) =
-        ($path =~ /^\/(.*?)\/reverse\/(.*)/);
+        ($path =~ /^\/(.*?)\/reverse_search\/(.*)/);
     if (not $REVERSE_TYPES{$search_type}) {
         warn "Reverse search object type is invalid.";
         return HTTP::Response->new(HTTP_BAD_REQUEST);
@@ -700,6 +700,32 @@ sub _search_reverse
         if (ref $email_args[0]) {
             @email_args = @{$email_args[0]};
         }
+    }
+
+    my @mappings;
+    if (@role_args) {
+        push @mappings, {
+            property => 'role',
+            propertyPath => q{$..entities[*].roles}
+        };
+    }
+    if (@email_args) {
+        push @mappings, {
+            property => 'email',
+            propertyPath => q{$..entities[*].vcardArray[1][?(@[0]=='email')][3]}
+        };
+    }
+    if (@fn_args) {
+        push @mappings, {
+            property => 'fn',
+            propertyPath => q{$..entities[*].vcardArray[1][?(@[0]=='fn')][3]}
+        };
+    }
+    if (defined $handle_arg) {
+        push @mappings, {
+            property => 'handle',
+            propertyPath => q{$..entities[*].handle}
+        };
     }
 
     my @results;
@@ -782,11 +808,40 @@ sub _search_reverse
                   delete $obj->{'rdapConformance'};
                   $obj }
                 @results
-        ]
+        ],
+        reverse_search_properties_mapping => \@mappings,
     });
 
     return HTTP::Response->new(HTTP_OK, [], undef,
                                $response_data);
+}
+
+sub _get_help
+{
+    my ($self, $r) = @_;
+
+    my $data = encode_json({
+        rdapConformance => ["rdap_level_0"],
+        notices => [ {
+            title       => 'RDAP RMP Client',
+            description => 'RDAP RMP Client',
+        } ],
+        reverse_search_properties => [
+            map {
+                my $srt = $_;
+                map {
+                    my $attr = $_;
+                    +{
+                        searchableResourceType => $srt,
+                        relatedResourceType => 'entity',
+                        property => $attr
+                    }
+                } qw(fn handle email role)
+            } qw(domains nameservers entities)
+        ],
+    });
+
+    return HTTP::Response->new(HTTP_OK, undef, [], $data);
 }
 
 sub _add_defaults
@@ -838,8 +893,10 @@ sub run
                         $res = $self->_get_domain($r);
                     } elsif ($path =~ /\/nameserver\/.*/) {
                         $res = $self->_get_nameserver($r);
-                    } elsif ($path =~ /^\/.*?\/reverse\//) {
+                    } elsif ($path =~ /^\/.*?\/reverse_search\//) {
                         $res = $self->_search_reverse($r);
+                    } elsif ($path =~ /^\/help/) {
+                        $res = $self->_get_help($r);
                     }
                 }
                 if ($res) {

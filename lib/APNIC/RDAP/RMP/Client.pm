@@ -19,6 +19,7 @@ use Net::Patricia;
 use Set::IntervalTree;
 
 use APNIC::RDAP::RMP::Serial qw(new_serial);
+use APNIC::RS;
 
 my %OBJECT_CLASS_NAME_TO_PATH = (
     'ip network' => 'ip',
@@ -607,11 +608,35 @@ sub _get_ip
     my $data = read_file($$res);
     my $obj = decode_json($data);
     $self->_annotate_ip($obj);
+    $data = encode_json($obj);
 
     return HTTP::Response->new(HTTP_OK, undef, [], $data);
 }
 
-sub _get_ip_up_object
+sub _get_ip_object
+{
+    my ($self, $ip) = @_;
+
+    my $net_ip = Net::IP::XS->new($ip);
+    if (not $net_ip) {
+        return;
+    }
+
+    my $db = $self->{'db'};
+    my $tree = ($net_ip->version() == 4) ? $db->{'ipv4'} : $db->{'ipv6'};
+    my $prefix = $net_ip->prefix();
+    my $res = $tree->match_string($prefix);
+    if (not $res) {
+        return;
+    }
+
+    my $data = read_file($$res);
+    my $obj = decode_json($data);
+    $self->_annotate_ip($obj);
+    return $obj;
+}
+
+sub _get_ip_less_specifics
 {
     my ($self, $ip) = @_;
 
@@ -631,19 +656,31 @@ sub _get_ip_up_object
         }
     }
 
-    if (not @less_specific) {
-        return;
-    }
-
-    my @next_least_specific =
+    my @ordered_less_specifics =
         map  { $_->[0] }
         sort { $a->[1]->size() <=> $b->[1]->size() }
             @less_specific;
 
-    return $next_least_specific[0];
+    return \@ordered_less_specifics;
 }
 
-sub _get_ip_down_objects
+sub _get_ip_up_object
+{
+    my ($self, $ip) = @_;
+
+    my @ils = @{$self->_get_ip_less_specifics($ip)};
+    return $ils[0];
+}
+
+sub _get_ip_top_object
+{
+    my ($self, $ip) = @_;
+
+    my @ils = @{$self->_get_ip_less_specifics($ip)};
+    return $ils[$#ils];
+}
+
+sub _get_ip_more_specifics
 {
     my ($self, $ip) = @_;
 
@@ -663,21 +700,61 @@ sub _get_ip_down_objects
         }
     }
 
-    my @next_most_specific =
+    my @ordered_more_specifics =
         sort { ($b->[1]->size() <=> $a->[1]->size())
                 || ($a->[1]->intip() <=> $b->[1]->intip()) }
             @more_specific;
 
+    return \@ordered_more_specifics;
+}
+
+sub _get_ip_down_objects
+{
+    my ($self, $ip) = @_;
+
+    my @ordered_more_specifics =
+        @{$self->_get_ip_more_specifics($ip)};
+
     my @results;
-    NMS: for my $nms (@next_most_specific) {
-        for my $r (@results) {
-            my $overlap = $nms->[1]->overlaps($r->[1]);
-            if ($overlap != $IP_NO_OVERLAP) {
-                next NMS;
-            }
+    my $covered_rs = APNIC::RS->new();
+    for my $oms (@ordered_more_specifics) {
+        my $rs = APNIC::RS->new($oms->[1]->prefix());
+        if ($covered_rs->intersection($rs)->is_empty()) {
+            push @results, $oms;
+            $covered_rs = $covered_rs->union($rs);
         }
-        push @results, $nms;
     }
+
+    return [ map { $_->[0] } @results ];
+}
+
+sub _get_ip_bottom_objects
+{
+    my ($self, $ip) = @_;
+
+    my @ordered_more_specifics =
+        @{$self->_get_ip_more_specifics($ip)};
+
+    my @results;
+    my $covered_rs = APNIC::RS->new($ip);
+    OMS: for my $oms (reverse @ordered_more_specifics) {
+        my $rs = APNIC::RS->new($oms->[1]->prefix());
+        if (not $covered_rs->intersection($rs)->is_empty()) {
+            push @results, $oms;
+            $covered_rs = $covered_rs->subtract($rs);
+        }
+    }
+
+    if (not $covered_rs->is_empty()) {
+        my $original_obj = $self->_get_ip_object($ip);
+        push @results, [ $original_obj,
+                         Net::IP::XS->new($ip) ];
+    }
+
+    @results =
+        sort { ($a->[1]->intip() <=> $b->[1]->intip())
+                || ($b->[1]->size() <=> $a->[1]->size()) }
+            @results;
 
     return [ map { $_->[0] } @results ];
 }
@@ -687,7 +764,7 @@ sub _get_ip_up
     my ($self, $r) = @_;
 
     my $path = $r->uri()->path();
-    my ($ip) = ($path =~ /\/ip-up\/(.+)/);
+    my ($ip) = ($path =~ /\/ips\/rir_search\/up\/(.+)/);
     if (not $ip) {
         return HTTP::Response->new(HTTP_BAD_REQUEST);
     }
@@ -703,17 +780,65 @@ sub _get_ip_up
                                encode_json($obj));
 }
 
+sub _get_ip_top
+{
+    my ($self, $r) = @_;
+
+    my $path = $r->uri()->path();
+    my ($ip) = ($path =~ /\/ips\/rir_search\/top\/(.+)/);
+    if (not $ip) {
+        return HTTP::Response->new(HTTP_BAD_REQUEST);
+    }
+
+    my $obj = $self->_get_ip_top_object($ip);
+    if (not $obj) {
+        return;
+    }
+
+    $self->_annotate_ip($obj);
+
+    return HTTP::Response->new(HTTP_OK, undef, [],
+                               encode_json($obj));
+}
+
 sub _get_ip_down
 {
     my ($self, $r) = @_;
 
     my $path = $r->uri()->path();
-    my ($ip) = ($path =~ /\/ip-down\/(.+)/);
+    my ($ip) = ($path =~ /\/ips\/rir_search\/down\/(.+)/);
     if (not $ip) {
         return HTTP::Response->new(HTTP_BAD_REQUEST);
     }
 
     my $objs = $self->_get_ip_down_objects($ip);
+
+    my $response_data = encode_json({
+        rdapConformance => ["rdap_level_0"],
+        'ipSearchResults' => [
+            map { my $obj = clone($_);
+                  delete $obj->{'rdapConformance'};
+                  $self->_annotate_ip($obj);
+                  $obj }
+                @{$objs}
+        ]
+    });
+
+    return HTTP::Response->new(HTTP_OK, [], undef,
+                               $response_data);
+}
+
+sub _get_ip_bottom
+{
+    my ($self, $r) = @_;
+
+    my $path = $r->uri()->path();
+    my ($ip) = ($path =~ /\/ips\/rir_search\/bottom\/(.+)/);
+    if (not $ip) {
+        return HTTP::Response->new(HTTP_BAD_REQUEST);
+    }
+
+    my $objs = $self->_get_ip_bottom_objects($ip);
 
     my $response_data = encode_json({
         rdapConformance => ["rdap_level_0"],
@@ -831,7 +956,6 @@ sub _get_autnum_up_object
     my ($self, $start, $end) = @_;
 
     my @less_specific;
-    warn "asn up start";
     for my $object_path (values %{$self->{'db'}->{'autnum'}}) {
         my $obj_data = read_file($object_path); 
         my $obj = decode_json($obj_data);
@@ -842,7 +966,6 @@ sub _get_autnum_up_object
             push @less_specific, [ $obj, $obj_end - $obj_start + 1 ];
         }
     }
-    warn "asn up end";
 
     if (not @less_specific) {
         return;
@@ -899,7 +1022,7 @@ sub _get_autnum_up
     my ($self, $r) = @_;
 
     my $path = $r->uri()->path();
-    my ($start, $end) = ($path =~ /\/autnum-up\/(.+)-(.+)/);
+    my ($start, $end) = ($path =~ /\/autnums\/rir_search\/up\/(.+)-(.+)/);
     if (not $start) {
         return HTTP::Response->new(HTTP_BAD_REQUEST);
     }
@@ -920,7 +1043,7 @@ sub _get_autnum_down
     my ($self, $r) = @_;
 
     my $path = $r->uri()->path();
-    my ($start, $end) = ($path =~ /\/autnum-down\/(.+)-(.+)/);
+    my ($start, $end) = ($path =~ /\/autnums\/rir_search\/down\/(.+)-(.+)/);
     if (not $start) {
         return HTTP::Response->new(HTTP_BAD_REQUEST);
     }
@@ -991,8 +1114,6 @@ sub ipv4_arpa_to_prefix
     while (@nums < 4) {
         push @nums, 0;
     }
-    use Data::Dumper;
-    warn Dumper(\@nums);
 
     return (join '.', @nums).'/'.$prefix_len;
 }
@@ -1104,7 +1225,7 @@ sub _get_domain_up
     my ($self, $r) = @_;
 
     my $path = $r->uri()->path();
-    my ($ldh_name) = ($path =~ /\/domain-up\/(.+)/);
+    my ($ldh_name) = ($path =~ /\/domains\/rir_search\/up\/(.+)/);
     if (not $ldh_name) {
         return HTTP::Response->new(HTTP_BAD_REQUEST);
     }
@@ -1125,7 +1246,7 @@ sub _get_domain_down
     my ($self, $r) = @_;
 
     my $path = $r->uri()->path();
-    my ($ldh_name) = ($path =~ /\/domain-down\/(.+)/);
+    my ($ldh_name) = ($path =~ /\/domains\/rir_search\/down\/(.+)/);
     if (not $ldh_name) {
         return HTTP::Response->new(HTTP_BAD_REQUEST);
     }
@@ -1408,17 +1529,21 @@ sub run
                         $res = $self->_get_nameserver($r);
                     } elsif ($path =~ /^\/.*?\/reverse\//) {
                         $res = $self->_search_reverse($r);
-                    } elsif ($path =~ /\/ip-up\/.*/) {
+                    } elsif ($path =~ /\/ips\/rir_search\/up\/.*/) {
                         $res = $self->_get_ip_up($r);
-                    } elsif ($path =~ /\/ip-down\/.*/) {
+                    } elsif ($path =~ /\/ips\/rir_search\/top\/.*/) {
+                        $res = $self->_get_ip_top($r);
+                    } elsif ($path =~ /\/ips\/rir_search\/down\/.*/) {
                         $res = $self->_get_ip_down($r);
-                    } elsif ($path =~ /\/autnum-up\/.*/) {
+                    } elsif ($path =~ /\/ips\/rir_search\/bottom\/.*/) {
+                        $res = $self->_get_ip_bottom($r);
+                    } elsif ($path =~ /\/autnums\/rir_search\/up\/.*/) {
                         $res = $self->_get_autnum_up($r);
-                    } elsif ($path =~ /\/autnum-down\/.*/) {
+                    } elsif ($path =~ /\/autnums\/rir_search\/down\/.*/) {
                         $res = $self->_get_autnum_down($r);
-                    } elsif ($path =~ /\/domain-up\/.*/) {
+                    } elsif ($path =~ /\/domains\/rir_search\/up\/.*/) {
                         $res = $self->_get_domain_up($r);
-                    } elsif ($path =~ /\/domain-down\/.*/) {
+                    } elsif ($path =~ /\/domains\/rir_search\/down\/.*/) {
                         $res = $self->_get_domain_down($r);
                     } elsif ($path =~ /\/ips/) {
                         $res = $self->_get_ips($r);
@@ -1433,6 +1558,7 @@ sub run
             if (my $error = $@) {
                 warn $error;
                 $res = HTTP::Response->new(HTTP_INTERNAL_SERVER_ERROR);
+                $res->content($error);
             } elsif (not $res) {
                 $res = HTTP::Response->new(HTTP_NOT_FOUND);
             }

@@ -16,7 +16,7 @@ use APNIC::RDAP::RMP::Client;
 use APNIC::RDAP::RMP::Server;
 use APNIC::RDAP::RMP::Serial qw(new_serial);
 
-use Test::More tests => 55;
+use Test::More tests => 64;
 
 my $pid;
 my $client_pid;
@@ -243,7 +243,7 @@ my $client_pid;
 
     # ip-up.
 
-    my $uri = URI->new($client_base.'/ip-up/1.0.0.0/24');
+    my $uri = URI->new($client_base.'/ips/rir_search/up/1.0.0.0/24');
     $res = $ua->get($uri);
     my $tr = ok($res->is_success(),
         'IP up fetch completed successfully for 1.0.0.0/24');
@@ -265,7 +265,7 @@ my $client_pid;
             @{$data->{'links'}};
     ok($has_down_link, 'Object has down link');
 
-    $uri = URI->new($client_base.'/ip-up/1.0.2.128/25');
+    $uri = URI->new($client_base.'/ips/rir_search/up/1.0.2.128/25');
     $res = $ua->get($uri);
     $tr = ok($res->is_success(),
         'IP up fetch completed successfully for 1.0.2.128/25');
@@ -287,9 +287,25 @@ my $client_pid;
             @{$data->{'links'}};
     ok($has_down_link, 'Object has down link');
 
+    # ip-top.
+
+    $uri = URI->new($client_base.'/ips/rir_search/top/1.0.64.0/26');
+    $res = $ua->get($uri);
+    $tr = ok($res->is_success(),
+        'IP top fetch completed successfully for 1.0.64.0/26');
+    if (not $tr) {
+        warn Dumper($res);
+    }
+
+    $data = decode_json($res->content());
+    is($data->{'startAddress'}, '1.0.0.0',
+        'Got correct start address');
+    is($data->{'endAddress'}, '1.255.255.255',
+        'Got correct end address');
+
     # ip-down.
 
-    $uri = URI->new($client_base.'/ip-down/1.0.0.0/8');
+    $uri = URI->new($client_base.'/ips/rir_search/down/1.0.0.0/8');
     $res = $ua->get($uri);
     $tr = ok($res->is_success(),
         'IP down fetch completed successfully for 1.0.0.0/8');
@@ -313,7 +329,7 @@ my $client_pid;
         'Got correct results'
     );
 
-    $uri = URI->new($client_base.'/ip-down/1.0.2.0/24');
+    $uri = URI->new($client_base.'/ips/rir_search/down/1.0.2.0/24');
     $res = $ua->get($uri);
     $tr = ok($res->is_success(),
         'IP down fetch completed successfully for 1.0.2.0/24');
@@ -335,9 +351,92 @@ my $client_pid;
         'Got correct results'
     );
 
+    # ip-bottom.
+
+    $uri = URI->new($client_base.'/ips/rir_search/bottom/1.0.0.0/8');
+    $res = $ua->get($uri);
+    $tr = ok($res->is_success(),
+        'IP bottom fetch completed successfully for 1.0.0.0/8');
+    if (not $tr) {
+        warn Dumper($res);
+    }
+
+    $data = decode_json($res->content());
+    @ranges =
+        map { Net::IP::XS->new(
+                $_->{'startAddress'}.'-'.
+                $_->{'endAddress'}
+              )->prefix() }
+        @{$data->{'ipSearchResults'}};
+
+    is_deeply(
+        \@ranges,
+        [qw(1.0.0.0/8
+            1.0.0.0/24
+            1.0.1.0/24
+            1.0.2.0/25
+            1.0.2.64/26
+            1.0.2.128/25
+            1.0.3.0/24)],
+        'Got correct results'
+    );
+
+    # ip-bottom where the argument isn't an existing object.
+
+    $uri = URI->new($client_base.'/ips/rir_search/bottom/1.0.0.0/22');
+    $res = $ua->get($uri);
+    $tr = ok($res->is_success(),
+        'IP bottom fetch completed successfully for 1.0.0.0/22');
+    if (not $tr) {
+        warn Dumper($res);
+    }
+
+    $data = decode_json($res->content());
+    @ranges =
+        map { Net::IP::XS->new(
+                $_->{'startAddress'}.'-'.
+                $_->{'endAddress'}
+              )->prefix() }
+        @{$data->{'ipSearchResults'}};
+
+    is_deeply(
+        \@ranges,
+        [qw(1.0.0.0/24
+            1.0.1.0/24
+            1.0.2.0/25
+            1.0.2.64/26
+            1.0.2.128/25
+            1.0.3.0/24)],
+        'Got correct results'
+    );
+
+    # ip-bottom where the argument has nothing under it.
+
+    $uri = URI->new($client_base.'/ips/rir_search/bottom/1.0.2.65');
+    $res = $ua->get($uri);
+    $tr = ok($res->is_success(),
+        'IP bottom fetch completed successfully for 1.0.2.65');
+    if (not $tr) {
+        warn Dumper($res);
+    }
+
+    $data = decode_json($res->content());
+    @ranges =
+        map { Net::IP::XS->new(
+                $_->{'startAddress'}.'-'.
+                $_->{'endAddress'}
+              )->prefix() }
+        @{$data->{'ipSearchResults'}};
+
+    is_deeply(
+        \@ranges,
+        [qw(1.0.2.64/26)],
+        'Got correct results'
+    );
+
     # autnum-up.
 
-    $uri = URI->new($client_base.'/autnum-up/10-10');
+    $uri = URI->new($client_base.'/autnums/rir_search/up/10-10');
     $res = $ua->get($uri);
     $tr = ok($res->is_success(),
         'Autnum up fetch completed successfully for 10');
@@ -359,7 +458,7 @@ my $client_pid;
             @{$data->{'links'}};
     ok($has_down_link, 'Object has down link');
 
-    $uri = URI->new($client_base.'/autnum-up/19-19');
+    $uri = URI->new($client_base.'/autnums/rir_search/up/19-19');
     $res = $ua->get($uri);
     $tr = ok($res->is_success(),
         'Autnum up fetch completed successfully for 19');
@@ -383,7 +482,7 @@ my $client_pid;
 
     # autnum-down.
 
-    $uri = URI->new($client_base.'/autnum-down/10-19');
+    $uri = URI->new($client_base.'/autnums/rir_search/down/10-19');
     $res = $ua->get($uri);
     $tr = ok($res->is_success(),
         'Autnum down fetch completed successfully for 10-19');
@@ -403,7 +502,7 @@ my $client_pid;
         'Got correct results'
     );
 
-    $uri = URI->new($client_base.'/autnum-down/16-19');
+    $uri = URI->new($client_base.'/autnums/rir_search/down/16-19');
     $res = $ua->get($uri);
     $tr = ok($res->is_success(),
         'Autnum down fetch completed successfully for 16-19');
@@ -425,7 +524,7 @@ my $client_pid;
 
     # domain-up.
 
-    $uri = URI->new($client_base.'/domain-up/10.1.in-addr.arpa');
+    $uri = URI->new($client_base.'/domains/rir_search/up/10.1.in-addr.arpa');
     $res = $ua->get($uri);
     $tr = ok($res->is_success(),
         'Domain up fetch completed successfully for 10.1.in-addr.arpa');
@@ -445,7 +544,7 @@ my $client_pid;
             @{$data->{'links'}};
     ok($has_down_link, 'Object has down link');
 
-    $uri = URI->new($client_base.'/domain-up/20.10.1.in-addr.arpa');
+    $uri = URI->new($client_base.'/domains/rir_search/up/20.10.1.in-addr.arpa');
     $res = $ua->get($uri);
     $tr = ok($res->is_success(),
         'Domain up fetch completed successfully for 20.10.1.in-addr.arpa');
@@ -467,7 +566,7 @@ my $client_pid;
 
     # domain-down.
 
-    $uri = URI->new($client_base.'/domain-down/1.in-addr.arpa');
+    $uri = URI->new($client_base.'/domains/rir_search/down/1.in-addr.arpa');
     $res = $ua->get($uri);
     $tr = ok($res->is_success(),
         'Domain down fetch completed successfully for 1.in-addr.arpa');
@@ -486,7 +585,7 @@ my $client_pid;
         'Got correct results'
     );
 
-    $uri = URI->new($client_base.'/domain-down/10.1.in-addr.arpa');
+    $uri = URI->new($client_base.'/domains/rir_search/down/10.1.in-addr.arpa');
     $res = $ua->get($uri);
     $tr = ok($res->is_success(),
         'Domain down fetch completed successfully for 10.1.in-addr.arpa');

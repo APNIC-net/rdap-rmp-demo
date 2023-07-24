@@ -565,18 +565,38 @@ sub _annotate_ip
 
     my $net_ip = Net::IP::XS->new($ip_obj->{'startAddress'}.'-'.
                                   $ip_obj->{'endAddress'});
-    if ($self->_get_ip_up_object($net_ip->prefix())) {
+    my $prefix = $net_ip->prefix();
+    if ($self->_get_ip_up_object($prefix)) {
         push @{$ip_obj->{'links'}},
              { rel  => 'up',
-               href => $self->{'url_base'}.'/ip-up/'.$net_ip->prefix() };
+               href => $self->{'url_base'}.'/ips/rir_search/up/'.$prefix };
     }
-    if (my $objs = $self->_get_ip_down_objects($net_ip->prefix())) {
+    if ($self->_get_ip_up_object($prefix, 'active')) {
+        push @{$ip_obj->{'links'}},
+             { rel  => 'up-active',
+               href => $self->{'url_base'}.'/ips/rir_search/up/'.$prefix.'?status=active' };
+    }
+    if ($self->_get_ip_top_object($prefix)) {
+        push @{$ip_obj->{'links'}},
+             { rel  => 'top',
+               href => $self->{'url_base'}.'/ips/rir_search/top/'.$prefix };
+    }
+    if ($self->_get_ip_top_object($prefix, 'active')) {
+        push @{$ip_obj->{'links'}},
+             { rel  => 'top-active',
+               href => $self->{'url_base'}.'/ips/rir_search/top/'.$prefix.'?status=active' };
+    }
+    if (my $objs = $self->_get_ip_down_objects($prefix)) {
         if (@{$objs}) {
             push @{$ip_obj->{'links'}},
                  { rel  => 'down',
-                   href => $self->{'url_base'}.'/ip-down/'.$net_ip->prefix() };
+                   href => $self->{'url_base'}.'/ips/rir_search/down/'.$prefix };
         }
     }
+    # To get around the infinite loop that can happen.
+    push @{$ip_obj->{'links'}},
+            { rel  => 'bottom',
+              href => $self->{'url_base'}.'/ips/rir_search/bottom/'.$prefix };
 
     return 1;
 }
@@ -638,13 +658,18 @@ sub _get_ip_object
 
 sub _get_ip_less_specifics
 {
-    my ($self, $ip) = @_;
+    my ($self, $ip, $status) = @_;
 
     my $search_net_ip = Net::IP::XS->new($ip);
     my @less_specific;
     for my $object_path (values %{$self->{'db'}->{'ip'}}) {
         my $obj_data = read_file($object_path); 
         my $obj = decode_json($obj_data);
+        my %statuses = map { $_ => 1 } @{$obj->{'status'} || []};
+        if ($status and not $statuses{$status}) {
+            next;
+        }
+
         my $net_ip =
             Net::IP::XS->new(
                 $obj->{'startAddress'}.'-'.
@@ -652,9 +677,14 @@ sub _get_ip_less_specifics
             );
         my $overlap = $search_net_ip->overlaps($net_ip);
         if ($overlap == $IP_A_IN_B_OVERLAP) {
+            warn "Putting ".$net_ip->prefix()." into consideration";
             push @less_specific, [ $obj, $net_ip ];
+        } else {
+            warn "Not putting ".$net_ip->prefix()." into consideration";
         }
     }
+
+    warn "SLS: ".(scalar @less_specific);
 
     my @ordered_less_specifics =
         map  { $_->[0] }
@@ -666,29 +696,33 @@ sub _get_ip_less_specifics
 
 sub _get_ip_up_object
 {
-    my ($self, $ip) = @_;
+    my ($self, $ip, $status) = @_;
 
-    my @ils = @{$self->_get_ip_less_specifics($ip)};
+    my @ils = @{$self->_get_ip_less_specifics($ip, $status)};
     return $ils[0];
 }
 
 sub _get_ip_top_object
 {
-    my ($self, $ip) = @_;
+    my ($self, $ip, $status) = @_;
 
-    my @ils = @{$self->_get_ip_less_specifics($ip)};
+    my @ils = @{$self->_get_ip_less_specifics($ip, $status)};
     return $ils[$#ils];
 }
 
 sub _get_ip_more_specifics
 {
-    my ($self, $ip) = @_;
+    my ($self, $ip, $status) = @_;
 
     my $search_net_ip = Net::IP::XS->new($ip);
     my @more_specific;
     for my $object_path (values %{$self->{'db'}->{'ip'}}) {
         my $obj_data = read_file($object_path); 
         my $obj = decode_json($obj_data);
+        my %statuses = map { $_ => 1 } @{$obj->{'status'} || []};
+        if ($status and not $statuses{$status}) {
+            next;
+        }
         my $net_ip =
             Net::IP::XS->new(
                 $obj->{'startAddress'}.'-'.
@@ -710,10 +744,10 @@ sub _get_ip_more_specifics
 
 sub _get_ip_down_objects
 {
-    my ($self, $ip) = @_;
+    my ($self, $ip, $status) = @_;
 
     my @ordered_more_specifics =
-        @{$self->_get_ip_more_specifics($ip)};
+        @{$self->_get_ip_more_specifics($ip, $status)};
 
     my @results;
     my $covered_rs = APNIC::RS->new();
@@ -730,10 +764,10 @@ sub _get_ip_down_objects
 
 sub _get_ip_bottom_objects
 {
-    my ($self, $ip) = @_;
+    my ($self, $ip, $status) = @_;
 
     my @ordered_more_specifics =
-        @{$self->_get_ip_more_specifics($ip)};
+        @{$self->_get_ip_more_specifics($ip, $status)};
 
     my @results;
     my $covered_rs = APNIC::RS->new($ip);
@@ -775,8 +809,9 @@ sub _get_ip_up
     if (not $ip) {
         return HTTP::Response->new(HTTP_BAD_REQUEST);
     }
+    my $status = $r->uri()->query_param('status');
 
-    my $obj = $self->_get_ip_up_object($ip);
+    my $obj = $self->_get_ip_up_object($ip, $status);
     if (not $obj) {
         return;
     }
@@ -791,13 +826,17 @@ sub _get_ip_top
 {
     my ($self, $r) = @_;
 
+    warn "IP TOP PATH: ".$r->uri()->path();
+
     my $path = $r->uri()->path();
     my ($ip) = ($path =~ /\/ips\/rir_search\/top\/(.+)/);
     if (not $ip) {
         return HTTP::Response->new(HTTP_BAD_REQUEST);
     }
+    my $status = $r->uri()->query_param('status');
+    warn "IP TOP STTS: ".$status;
 
-    my $obj = $self->_get_ip_top_object($ip);
+    my $obj = $self->_get_ip_top_object($ip, $status);
     if (not $obj) {
         return;
     }
@@ -817,8 +856,9 @@ sub _get_ip_down
     if (not $ip) {
         return HTTP::Response->new(HTTP_BAD_REQUEST);
     }
+    my $status = $r->uri()->query_param('status');
 
-    my $objs = $self->_get_ip_down_objects($ip);
+    my $objs = $self->_get_ip_down_objects($ip, $status);
 
     my $response_data = encode_json({
         rdapConformance => ["rdap_level_0"],
@@ -844,8 +884,9 @@ sub _get_ip_bottom
     if (not $ip) {
         return HTTP::Response->new(HTTP_BAD_REQUEST);
     }
+    my $status = $r->uri()->query_param('status');
 
-    my $objs = $self->_get_ip_bottom_objects($ip);
+    my $objs = $self->_get_ip_bottom_objects($ip, $status);
 
     my $response_data = encode_json({
         rdapConformance => ["rdap_level_0"],

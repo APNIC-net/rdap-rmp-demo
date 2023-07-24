@@ -16,7 +16,7 @@ use APNIC::RDAP::RMP::Client;
 use APNIC::RDAP::RMP::Server;
 use APNIC::RDAP::RMP::Serial qw(new_serial);
 
-use Test::More tests => 79;
+use Test::More tests => 86;
 
 my $pid;
 my $client_pid;
@@ -115,7 +115,7 @@ my $client_pid;
     }));
 
     my $make_ip = sub {
-        my ($range, $name, $entity_role) = @_;
+        my ($range, $name, $entity_role, $status) = @_;
         $entity_role ||= 'registrant';
         my $net_ip = Net::IP::XS->new($range);
         my $start_address = $net_ip->ip();
@@ -143,6 +143,9 @@ my $client_pid;
                         href => 'https://example.com/entity/TP137-AP' }
                   ] },
             ],
+            ($status)
+                ? (status => [ $status ])
+                : ()
         }));
     };
 
@@ -201,23 +204,23 @@ my $client_pid;
         }));
     };
 
-    $make_ip->('1.0.0.0/8', 'top', 'technical');
-    
-    $make_ip->('1.0.0.0/24', 'middle1');
-    $make_ip->('1.0.1.0/24', 'middle2', 'technical');
-    $make_ip->('1.0.2.0/24', 'middle3', 'administrative');
-    $make_ip->('1.0.3.0/24', 'middle4', 'administrative');
+    $make_ip->('1.0.0.0/8', 'top', 'technical', 'inactive');
 
-    $make_ip->('1.0.2.0/25', 'lower1', 'technical');
-    $make_ip->('1.0.2.128/25', 'lower2');
+    $make_ip->('1.0.0.0/24', 'middle1', undef, 'active');
+    $make_ip->('1.0.1.0/24', 'middle2', 'technical', 'active');
+    $make_ip->('1.0.2.0/24', 'middle3', 'administrative', 'active');
+    $make_ip->('1.0.3.0/24', 'middle4', 'administrative', 'inactive');
 
-    $make_ip->('1.0.2.64/26', 'bottom');
+    $make_ip->('1.0.2.0/25', 'lower1', 'technical', 'active');
+    $make_ip->('1.0.2.128/25', 'lower2', undef, 'active');
+
+    $make_ip->('1.0.2.64/26', 'bottom', undef, 'active');
 
     $make_autnum->(1, 'first');
     $make_autnum->(2, 'second');
     $make_autnum->(3, 'third');
     $make_autnum->(4, 'fourth');
-    
+
     $make_autnum->('10-19', 'top', 'technical');
     $make_autnum->('10-15', 'middle', 'technical');
     $make_autnum->('16-19', 'middle', 'technical');
@@ -225,7 +228,7 @@ my $client_pid;
     $make_autnum->(11, ',bottom', 'administrative');
     $make_autnum->(18, ',bottom', 'administrative');
     $make_autnum->(19, ',bottom', 'administrative');
-    
+
     $make_domain->('1.in-addr.arpa', 'top', 'technical');
     $make_domain->('10.1.in-addr.arpa', 'middle');
     $make_domain->('20.1.in-addr.arpa', 'middle', 'technical');
@@ -301,6 +304,23 @@ my $client_pid;
     is($data->{'startAddress'}, '1.0.0.0',
         'Got correct start address');
     is($data->{'endAddress'}, '1.255.255.255',
+        'Got correct end address');
+
+    # ip-top with status.
+
+    $uri = URI->new($client_base.'/ips/rir_search/top/1.0.2.64/26'.
+                                 '?status=active');
+    $res = $ua->get($uri);
+    $tr = ok($res->is_success(),
+        'IP top fetch completed successfully for 1.0.2.64/26 (active)');
+    if (not $tr) {
+        warn Dumper($res);
+    }
+
+    $data = decode_json($res->content());
+    is($data->{'startAddress'}, '1.0.2.0',
+        'Got correct start address');
+    is($data->{'endAddress'}, '1.0.2.255',
         'Got correct end address');
 
     # ip-down.
@@ -381,6 +401,37 @@ my $client_pid;
         'Got correct results'
     );
 
+    # ip-bottom with status.
+
+    $uri =
+        URI->new($client_base.
+                 '/ips/rir_search/bottom/1.0.0.0/8?status=active');
+    $res = $ua->get($uri);
+    $tr = ok($res->is_success(),
+        'IP bottom fetch completed successfully for 1.0.0.0/8');
+    if (not $tr) {
+        warn Dumper($res);
+    }
+
+    $data = decode_json($res->content());
+    @ranges =
+        map { Net::IP::XS->new(
+                $_->{'startAddress'}.'-'.
+                $_->{'endAddress'}
+              )->prefix() }
+        @{$data->{'ipSearchResults'}};
+
+    is_deeply(
+        \@ranges,
+        [qw(1.0.0.0/8
+            1.0.0.0/24
+            1.0.1.0/24
+            1.0.2.0/25
+            1.0.2.64/26
+            1.0.2.128/25)],
+        'Got correct results'
+    );
+
     # ip-bottom where the argument isn't an existing object.
 
     $uri = URI->new($client_base.'/ips/rir_search/bottom/1.0.0.0/22');
@@ -433,6 +484,47 @@ my $client_pid;
         [qw(1.0.2.64/26)],
         'Got correct results'
     );
+
+    # IP links.
+
+    $uri = URI->new($client_base.'/ip/1.0.2.0/25');
+    $res = $ua->get($uri);
+    $tr = ok($res->is_success(),
+        'IP fetch completed successfully for 1.0.2.0/25');
+    if (not $tr) {
+        warn Dumper($res);
+    }
+
+    $data = decode_json($res->content());
+    my @links = @{$data->{'links'}};
+    my %processed;
+    for my $link (@links) {
+        my ($rel, $href) = @{$link}{qw(rel href)};
+        if ($rel eq 'self') {
+            next;
+        }
+        my $link_res = $ua->get($href);
+        my $link_data = decode_json($link_res->decoded_content());
+        if ($link_data->{'startAddress'}) {
+            $processed{$rel} = $link_data->{'startAddress'}.'-'.
+                               $link_data->{'endAddress'};
+        } elsif ($link_data->{'ipSearchResults'}) {
+            $processed{$rel} = [
+                map { $_->{'startAddress'}.'-'.
+                      $_->{'endAddress'} }
+                    @{$link_data->{'ipSearchResults'}}
+            ];
+        }
+    }
+    is_deeply(\%processed,
+              { 'up'         => '1.0.2.0-1.0.2.255',
+                'top'        => '1.0.0.0-1.255.255.255',
+                'up-active'  => '1.0.2.0-1.0.2.255',
+                'top-active' => '1.0.2.0-1.0.2.255',
+                'down'       => [ '1.0.2.64-1.0.2.127' ],
+                'bottom'     => [ '1.0.2.0-1.0.2.127',
+                                  '1.0.2.64-1.0.2.127' ] },
+              'Got complete set of links');
 
     # autnum-up.
 
@@ -766,7 +858,7 @@ my $client_pid;
               'Got correct results for name search');
 
     # IP by handle.
-    
+
     $uri = URI->new($client_base.'/ips?handle=HANDLE-LOWER*');
     $res = $ua->get($uri);
     $tr = ok($res->is_success(),
@@ -807,7 +899,7 @@ my $client_pid;
               'Got correct results for name search');
 
     # Autnum by handle.
-    
+
     $uri = URI->new($client_base.'/autnums?handle=HANDLE-*F*');
     $res = $ua->get($uri);
     $tr = ok($res->is_success(),

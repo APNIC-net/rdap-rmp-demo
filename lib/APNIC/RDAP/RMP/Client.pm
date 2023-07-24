@@ -747,8 +747,10 @@ sub _get_ip_bottom_objects
 
     if (not $covered_rs->is_empty()) {
         my $original_obj = $self->_get_ip_object($ip);
-        push @results, [ $original_obj,
-                         Net::IP::XS->new($ip) ];
+        if ($original_obj) {
+            push @results, [ $original_obj,
+                             Net::IP::XS->new($ip) ];
+        }
     }
 
     @results =
@@ -951,7 +953,7 @@ sub _get_autnum
                                encode_json($smallest));
 }
 
-sub _get_autnum_up_object
+sub _get_autnum_less_specifics
 {
     my ($self, $start, $end) = @_;
 
@@ -968,18 +970,34 @@ sub _get_autnum_up_object
     }
 
     if (not @less_specific) {
-        return;
+        return [];
     }
 
-    my @next_least_specific =
+    my @ordered_less_specific =
         map  { $_->[0] }
         sort { $a->[1] <=> $b->[1] }
             @less_specific;
 
-    return $next_least_specific[0];
+    return \@ordered_less_specific;
 }
 
-sub _get_autnum_down_objects
+sub _get_autnum_up_object
+{
+    my ($self, $start, $end) = @_;
+
+    my @als = @{$self->_get_autnum_less_specifics($start, $end)};
+    return $als[0];
+}
+
+sub _get_autnum_top_object
+{
+    my ($self, $start, $end) = @_;
+
+    my @als = @{$self->_get_autnum_less_specifics($start, $end)};
+    return $als[$#als];
+}
+
+sub _get_autnum_more_specifics
 {
     my ($self, $start, $end) = @_;
 
@@ -996,23 +1014,69 @@ sub _get_autnum_down_objects
         }
     }
 
-    my @next_most_specific =
+    my @ordered_more_specifics =
         sort { ($b->[3] <=> $a->[3])
                 || ($a->[1] <=> $b->[1]) }
             @more_specific;
 
+    return \@ordered_more_specifics;
+}
+
+sub _get_autnum_down_objects
+{
+    my ($self, $start, $end) = @_;
+
+    my @ordered_more_specifics =
+        @{$self->_get_autnum_more_specifics($start, $end)};
+
     my @results;
-    NMS: for my $nms (@next_most_specific) {
-        my (undef, $nms_start, $nms_end, undef) = @{$nms};
+    OMS: for my $oms (@ordered_more_specifics) {
+        my (undef, $oms_start, $oms_end, undef) = @{$oms};
         for my $r (@results) {
             my (undef, $r_start, $r_end, undef) = @{$r};
-            if (($nms_start >= $r_start)
-                    and ($nms_end <= $r_end)) {
-                next NMS;
+            if (($oms_start >= $r_start)
+                    and ($oms_end <= $r_end)) {
+                next OMS;
             }
         }
-        push @results, $nms;
+        push @results, $oms;
     }
+
+    return [ map { $_->[0] } @results ];
+}
+
+sub _get_autnum_bottom_objects
+{
+    my ($self, $start, $end) = @_;
+
+    my @ordered_more_specifics =
+        @{$self->_get_autnum_more_specifics($start, $end)};
+
+    my @results;
+    my $covered_rs = APNIC::RS->new("$start-$end");
+    OMS: for my $oms (@ordered_more_specifics) {
+        my (undef, $oms_start, $oms_end, undef) = @{$oms};
+        my $rs = APNIC::RS->new("$oms_start-$oms_end");
+        if (not $covered_rs->intersection($rs)->is_empty()) {
+            push @results, $oms;
+            $covered_rs = $covered_rs->subtract($rs);
+        }
+    }
+
+    if (not $covered_rs->is_empty()) {
+        my $original_obj = $self->_get_autnum_object($start, $end);
+        if ($original_obj) {
+            my $start = $original_obj->{'startAutnum'};
+            my $end   = $original_obj->{'endAutnum'};
+            push @results, [ $original_obj,
+                             $start, $end, $end - $start + 1 ];
+        }
+    }
+
+    @results =
+        sort { ($a->[1] <=> $b->[1])
+                || ($b->[3] <=> $a->[3]) }
+            @results; 
 
     return [ map { $_->[0] } @results ];
 }
@@ -1022,12 +1086,41 @@ sub _get_autnum_up
     my ($self, $r) = @_;
 
     my $path = $r->uri()->path();
-    my ($start, $end) = ($path =~ /\/autnums\/rir_search\/up\/(.+)-(.+)/);
-    if (not $start) {
+    my ($input) = ($path =~ /\/autnums\/rir_search\/up\/(.+)/);
+    if (not $input) {
         return HTTP::Response->new(HTTP_BAD_REQUEST);
     }
+    my ($start, $end) =
+        ($input =~ /^(.+)-(.+)$/)
+            ? ($1, $2)
+            : ($input, $input);
 
     my $obj = $self->_get_autnum_up_object($start, $end);
+    if (not $obj) {
+        return;
+    }
+
+    $self->_annotate_autnum($obj);
+
+    return HTTP::Response->new(HTTP_OK, undef, [],
+                               encode_json($obj));
+}
+
+sub _get_autnum_top
+{
+    my ($self, $r) = @_;
+
+    my $path = $r->uri()->path();
+    my ($input) = ($path =~ /\/autnums\/rir_search\/top\/(.+)/);
+    if (not $input) {
+        return HTTP::Response->new(HTTP_BAD_REQUEST);
+    }
+    my ($start, $end) =
+        ($input =~ /^(.+)-(.+)$/)
+            ? ($1, $2)
+            : ($input, $input);
+
+    my $obj = $self->_get_autnum_top_object($start, $end);
     if (not $obj) {
         return;
     }
@@ -1049,6 +1142,33 @@ sub _get_autnum_down
     }
 
     my $objs = $self->_get_autnum_down_objects($start, $end);
+
+    my $response_data = encode_json({
+        rdapConformance => ["rdap_level_0"],
+        'autnumSearchResults' => [
+            map { my $obj = clone($_);
+                  delete $obj->{'rdapConformance'};
+                  $self->_annotate_autnum($obj);
+                  $obj }
+                @{$objs}
+        ]
+    });
+
+    return HTTP::Response->new(HTTP_OK, [], undef,
+                               $response_data);
+}
+
+sub _get_autnum_bottom
+{
+    my ($self, $r) = @_;
+
+    my $path = $r->uri()->path();
+    my ($start, $end) = ($path =~ /\/autnums\/rir_search\/bottom\/(.+)-(.+)/);
+    if (not $start) {
+        return HTTP::Response->new(HTTP_BAD_REQUEST);
+    }
+
+    my $objs = $self->_get_autnum_bottom_objects($start, $end);
 
     my $response_data = encode_json({
         rdapConformance => ["rdap_level_0"],
@@ -1541,6 +1661,10 @@ sub run
                         $res = $self->_get_autnum_up($r);
                     } elsif ($path =~ /\/autnums\/rir_search\/down\/.*/) {
                         $res = $self->_get_autnum_down($r);
+                    } elsif ($path =~ /\/autnums\/rir_search\/top\/.*/) {
+                        $res = $self->_get_autnum_top($r);
+                    } elsif ($path =~ /\/autnums\/rir_search\/bottom\/.*/) {
+                        $res = $self->_get_autnum_bottom($r);
                     } elsif ($path =~ /\/domains\/rir_search\/up\/.*/) {
                         $res = $self->_get_domain_up($r);
                     } elsif ($path =~ /\/domains\/rir_search\/down\/.*/) {

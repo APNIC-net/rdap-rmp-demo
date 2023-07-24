@@ -16,7 +16,7 @@ use APNIC::RDAP::RMP::Client;
 use APNIC::RDAP::RMP::Server;
 use APNIC::RDAP::RMP::Serial qw(new_serial);
 
-use Test::More tests => 64;
+use Test::More tests => 69;
 
 my $pid;
 my $client_pid;
@@ -480,6 +480,22 @@ my $client_pid;
             @{$data->{'links'}};
     ok($has_down_link, 'Object has down link');
 
+    # autnum-top.
+
+    $uri = URI->new($client_base.'/autnums/rir_search/top/18');
+    $res = $ua->get($uri);
+    $tr = ok($res->is_success(),
+        'Autnum top fetch completed successfully for 18');
+    if (not $tr) {
+        warn Dumper($res);
+    }
+
+    $data = decode_json($res->content());
+    is($data->{'startAutnum'}, '10',
+        'Got correct start autnum');
+    is($data->{'endAutnum'}, '19',
+        'Got correct end autnum');
+
     # autnum-down.
 
     $uri = URI->new($client_base.'/autnums/rir_search/down/10-19');
@@ -519,6 +535,28 @@ my $client_pid;
         \@ranges,
         [[18, 18],
          [19, 19]],
+        'Got correct results'
+    );
+
+    # autnum-bottom.
+
+    $uri = URI->new($client_base.'/autnums/rir_search/bottom/10-19');
+    $res = $ua->get($uri);
+    $tr = ok($res->is_success(),
+        'Autnum bottom fetch completed successfully for 10-19');
+    if (not $tr) {
+        warn Dumper($res);
+    }
+
+    $data = decode_json($res->content());
+    @ranges =
+        map { [ $_->{'startAutnum'},
+                $_->{'endAutnum'} ] }
+            @{$data->{'autnumSearchResults'}};
+    is_deeply(
+        \@ranges,
+        [[10, 15],
+         [16, 19]],
         'Got correct results'
     );
 

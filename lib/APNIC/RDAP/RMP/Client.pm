@@ -748,8 +748,13 @@ sub _get_ip_bottom_objects
     if (not $covered_rs->is_empty()) {
         my $original_obj = $self->_get_ip_object($ip);
         if ($original_obj) {
-            push @results, [ $original_obj,
-                             Net::IP::XS->new($ip) ];
+            my $str = $original_obj->{'startAddress'}.'-'.
+                      $original_obj->{'endAddress'};
+            my $str_rs = APNIC::RS->new($str);
+            if (not $covered_rs->intersection($str_rs)->is_empty()) {
+                push @results, [ $original_obj,
+                                 Net::IP::XS->new($ip) ];
+            }
         }
     }
 
@@ -921,6 +926,33 @@ sub _annotate_autnum
     return 1;
 }
 
+sub _get_autnum_object
+{
+    my ($self, $start, $end) = @_;
+
+    my $db = $self->{'db'};
+
+    my $tree = $db->{'autnum_tree'};
+    my @results =
+        map { decode_json(read_file($_)) }
+            @{$tree->fetch($start, $end + 1)};
+    if (not @results) {
+        return;
+    }
+
+    my @ordered =
+        sort {      ($a->{'endAutnum'} - $a->{'startAutnum'})
+                <=> ($b->{'endAutnum'} - $a->{'startAutnum'}) }
+            @results;
+    my $smallest = $ordered[0];
+    if (not $smallest) {
+        return;
+    }
+
+    $self->_annotate_autnum($smallest);
+    return $smallest;
+}
+
 sub _get_autnum
 {
     my ($self, $r) = @_;
@@ -933,24 +965,13 @@ sub _get_autnum
         return HTTP::Response->new(HTTP_BAD_REQUEST);
     }
 
-    my $tree = $db->{'autnum_tree'};
-    my @results =
-        map { decode_json(read_file($_)) }
-            @{$tree->fetch($autnum, $autnum + 1)};
-    if (not @results) {
+    my $obj = $self->_get_autnum_object($autnum, $autnum);
+    if (not $obj) {
         return HTTP::Response->new(HTTP_NOT_FOUND);
     }
 
-    my @ordered =
-        sort {      ($a->{'endAutnum'} - $a->{'startAutnum'})
-                <=> ($b->{'endAutnum'} - $a->{'startAutnum'}) }
-            @results;
-    my $smallest = $ordered[0];
-
-    $self->_annotate_autnum($smallest);
-
     return HTTP::Response->new(HTTP_OK, undef, [],
-                               encode_json($smallest));
+                               encode_json($obj));
 }
 
 sub _get_autnum_less_specifics
@@ -1054,22 +1075,31 @@ sub _get_autnum_bottom_objects
 
     my @results;
     my $covered_rs = APNIC::RS->new("$start-$end");
-    OMS: for my $oms (@ordered_more_specifics) {
+    OMS: for my $oms (reverse @ordered_more_specifics) {
         my (undef, $oms_start, $oms_end, undef) = @{$oms};
         my $rs = APNIC::RS->new("$oms_start-$oms_end");
+        warn "Covered RS: ".$covered_rs->as_string().", considering ".
+             "$oms_start-$oms_end";
         if (not $covered_rs->intersection($rs)->is_empty()) {
+            warn "Adding $oms_start-$oms_end";
             push @results, $oms;
             $covered_rs = $covered_rs->subtract($rs);
+        } else {
+            warn "Not adding $oms_start-$oms_end";
         }
     }
 
     if (not $covered_rs->is_empty()) {
         my $original_obj = $self->_get_autnum_object($start, $end);
         if ($original_obj) {
-            my $start = $original_obj->{'startAutnum'};
-            my $end   = $original_obj->{'endAutnum'};
-            push @results, [ $original_obj,
-                             $start, $end, $end - $start + 1 ];
+            my $start  = $original_obj->{'startAutnum'};
+            my $end    = $original_obj->{'endAutnum'};
+            my $str    = "$start-$end";
+            my $str_rs = APNIC::RS->new($str);
+            if (not $covered_rs->intersection($str_rs)->is_empty()) {
+                push @results, [ $original_obj,
+                                 $start, $end, $end - $start + 1 ];
+            }
         }
     }
 
@@ -1136,10 +1166,14 @@ sub _get_autnum_down
     my ($self, $r) = @_;
 
     my $path = $r->uri()->path();
-    my ($start, $end) = ($path =~ /\/autnums\/rir_search\/down\/(.+)-(.+)/);
-    if (not $start) {
+    my ($input) = ($path =~ /\/autnums\/rir_search\/down\/(.+)/);
+    if (not $input) {
         return HTTP::Response->new(HTTP_BAD_REQUEST);
     }
+    my ($start, $end) =
+        ($input =~ /^(.+)-(.+)$/)
+            ? ($1, $2)
+            : ($input, $input);
 
     my $objs = $self->_get_autnum_down_objects($start, $end);
 
@@ -1163,10 +1197,14 @@ sub _get_autnum_bottom
     my ($self, $r) = @_;
 
     my $path = $r->uri()->path();
-    my ($start, $end) = ($path =~ /\/autnums\/rir_search\/bottom\/(.+)-(.+)/);
-    if (not $start) {
+    my ($input) = ($path =~ /\/autnums\/rir_search\/bottom\/(.+)/);
+    if (not $input) {
         return HTTP::Response->new(HTTP_BAD_REQUEST);
     }
+    my ($start, $end) =
+        ($input =~ /^(.+)-(.+)$/)
+            ? ($1, $2)
+            : ($input, $input);
 
     my $objs = $self->_get_autnum_bottom_objects($start, $end);
 
@@ -1277,7 +1315,7 @@ sub _domain_to_net_ip
     return $prefix;
 }
 
-sub _get_domain_up_object
+sub _get_domain_less_specifics
 {
     my ($self, $ldh_name) = @_;
 
@@ -1294,18 +1332,34 @@ sub _get_domain_up_object
     }
 
     if (not @less_specific) {
-        return;
+        return [];
     }
 
-    my @next_least_specific =
+    my @ordered_less_specifics =
         map  { $_->[0] }
         sort { $a->[1]->size() <=> $b->[1]->size() }
             @less_specific;
 
-    return $next_least_specific[0];
+    return \@ordered_less_specifics;
 }
 
-sub _get_domain_down_objects
+sub _get_domain_up_object
+{
+    my ($self, $ldh_name) = @_;
+
+    my @dls = @{$self->_get_domain_less_specifics($ldh_name)};
+    return $dls[0];
+}
+
+sub _get_domain_top_object
+{
+    my ($self, $ldh_name) = @_;
+
+    my @dls = @{$self->_get_domain_less_specifics($ldh_name)};
+    return $dls[$#dls];
+}
+
+sub _get_domain_more_specifics
 {
     my ($self, $ldh_name) = @_;
 
@@ -1321,21 +1375,67 @@ sub _get_domain_down_objects
         }
     }
 
-    my @next_most_specific =
+    my @ordered_more_specifics =
         sort { ($b->[1]->size() <=> $a->[1]->size())
                 || ($a->[1]->intip() <=> $b->[1]->intip()) }
             @more_specific;
 
+    return \@ordered_more_specifics;
+}
+
+sub _get_domain_down_objects
+{
+    my ($self, $ldh_name) = @_;
+
+    my @ordered_more_specifics =
+        @{$self->_get_domain_more_specifics($ldh_name)};
+
     my @results;
-    NMS: for my $nms (@next_most_specific) {
-        for my $r (@results) {
-            my $overlap = $nms->[1]->overlaps($r->[1]);
-            if ($overlap != $IP_NO_OVERLAP) {
-                next NMS;
+    my $covered_rs = APNIC::RS->new();
+    for my $oms (@ordered_more_specifics) {
+        my $rs = APNIC::RS->new($oms->[1]->prefix());
+        if ($covered_rs->intersection($rs)->is_empty()) {
+            push @results, $oms;
+            $covered_rs = $covered_rs->union($rs);
+        }
+    }
+
+    return [ map { $_->[0] } @results ];
+}
+
+sub _get_domain_bottom_objects
+{
+    my ($self, $ldh_name) = @_;
+
+    my @ordered_more_specifics =
+        @{$self->_get_domain_more_specifics($ldh_name)};
+
+    my @results;
+    my $covered_rs =
+        APNIC::RS->new(arpa_to_prefix($ldh_name)->prefix());
+    for my $oms (reverse @ordered_more_specifics) {
+        my $rs = APNIC::RS->new($oms->[1]->prefix());
+        if (not $covered_rs->intersection($rs)->is_empty()) {
+            push @results, $oms;
+            $covered_rs = $covered_rs->subtract($rs);
+        }
+    }
+
+    if (not $covered_rs->is_empty()) {
+        my $original_obj = $self->_get_domain_object($ldh_name);
+        if ($original_obj) {
+            my $net_ip = $self->_domain_to_net_ip($original_obj);
+            my $str_rs = APNIC::RS->new($net_ip->prefix());
+            if (not $covered_rs->intersection($str_rs)->is_empty()) {
+                push @results, [ $original_obj, $net_ip ];
             }
         }
-        push @results, $nms;
     }
+
+    @results =
+        sort { ($a->[1]->intip() <=> $b->[1]->intip())
+                || ($b->[1]->size() <=> $a->[1]->size()) }
+            @results;
 
     return [ map { $_->[0] } @results ];
 }
@@ -1351,6 +1451,27 @@ sub _get_domain_up
     }
 
     my $obj = $self->_get_domain_up_object($ldh_name);
+    if (not $obj) {
+        return;
+    }
+
+    $self->_annotate_domain($obj);
+
+    return HTTP::Response->new(HTTP_OK, undef, [],
+                               encode_json($obj));
+}
+
+sub _get_domain_top
+{
+    my ($self, $r) = @_;
+
+    my $path = $r->uri()->path();
+    my ($ldh_name) = ($path =~ /\/domains\/rir_search\/top\/(.+)/);
+    if (not $ldh_name) {
+        return HTTP::Response->new(HTTP_BAD_REQUEST);
+    }
+
+    my $obj = $self->_get_domain_top_object($ldh_name);
     if (not $obj) {
         return;
     }
@@ -1388,6 +1509,33 @@ sub _get_domain_down
                                $response_data);
 }
 
+sub _get_domain_bottom
+{
+    my ($self, $r) = @_;
+
+    my $path = $r->uri()->path();
+    my ($ldh_name) = ($path =~ /\/domains\/rir_search\/bottom\/(.+)/);
+    if (not $ldh_name) {
+        return HTTP::Response->new(HTTP_BAD_REQUEST);
+    }
+
+    my $objs = $self->_get_domain_bottom_objects($ldh_name);
+
+    my $response_data = encode_json({
+        rdapConformance => ["rdap_level_0"],
+        'domainSearchResults' => [
+            map { my $obj = clone($_);
+                  delete $obj->{'rdapConformance'};
+                  $self->_annotate_domain($obj);
+                  $obj }
+                @{$objs}
+        ]
+    });
+
+    return HTTP::Response->new(HTTP_OK, [], undef,
+                               $response_data);
+}
+
 sub _annotate_domain
 {
     my ($self, $domain_obj) = @_;
@@ -1409,6 +1557,30 @@ sub _annotate_domain
     return 1;
 }
 
+sub _get_domain_object
+{
+    my ($self, $ldh_name) = @_;
+
+    my $db = $self->{'db'};
+
+    if (not exists $db->{'domain'}->{$ldh_name}) {
+        my $obj = $self->_get_domain_up_object($ldh_name);
+        if ($obj) {
+            $self->_annotate_domain($obj);
+            return $obj;
+        } else {
+            return;
+        }
+    }
+
+    my $path = $db->{'domain'}->{$ldh_name};
+    my $data = read_file($path);
+    my $obj = decode_json($data);
+    $self->_annotate_domain($obj);
+
+    return $obj;
+}
+
 sub _get_domain
 {
     my ($self, $r) = @_;
@@ -1421,14 +1593,12 @@ sub _get_domain
         return HTTP::Response->new(HTTP_BAD_REQUEST);
     }
 
-    if (not exists $db->{'domain'}->{$domain}) {
+    my $obj = $self->_get_domain_object($domain);
+    if (not $obj) {
         return HTTP::Response->new(HTTP_NOT_FOUND);
     }
 
-    $path = $db->{'domain'}->{$domain};
-    my $data = read_file($path);
-    my $obj = decode_json($data);
-    $self->_annotate_domain($obj);
+    my $data = encode_json($obj);
 
     return HTTP::Response->new(HTTP_OK, undef, [], $data);
 }
@@ -1669,6 +1839,10 @@ sub run
                         $res = $self->_get_domain_up($r);
                     } elsif ($path =~ /\/domains\/rir_search\/down\/.*/) {
                         $res = $self->_get_domain_down($r);
+                    } elsif ($path =~ /\/domains\/rir_search\/top\/.*/) {
+                        $res = $self->_get_domain_top($r);
+                    } elsif ($path =~ /\/domains\/rir_search\/bottom\/.*/) {
+                        $res = $self->_get_domain_bottom($r);
                     } elsif ($path =~ /\/ips/) {
                         $res = $self->_get_ips($r);
                     } elsif ($path =~ /\/autnums/) {

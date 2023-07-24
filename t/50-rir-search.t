@@ -16,7 +16,7 @@ use APNIC::RDAP::RMP::Client;
 use APNIC::RDAP::RMP::Server;
 use APNIC::RDAP::RMP::Serial qw(new_serial);
 
-use Test::More tests => 69;
+use Test::More tests => 79;
 
 my $pid;
 my $client_pid;
@@ -556,9 +556,74 @@ my $client_pid;
     is_deeply(
         \@ranges,
         [[10, 15],
-         [16, 19]],
+         [10, 10],
+         [11, 11],
+         [16, 19],
+         [18, 18],
+         [19, 19]],
         'Got correct results'
     );
+
+    $uri = URI->new($client_base.'/autnums/rir_search/bottom/1-1000');
+    $res = $ua->get($uri);
+    $tr = ok($res->is_success(),
+        'Autnum bottom fetch completed successfully for 1-1000');
+    if (not $tr) {
+        warn Dumper($res);
+    }
+
+    $data = decode_json($res->content());
+    @ranges =
+        map { [ $_->{'startAutnum'},
+                $_->{'endAutnum'} ] }
+            @{$data->{'autnumSearchResults'}};
+    is_deeply(
+        \@ranges,
+        [[1,  1],
+         [2,  2],
+         [3,  3],
+         [4,  4],
+         [10, 15],
+         [10, 10],
+         [11, 11],
+         [16, 19],
+         [18, 18],
+         [19, 19]],
+        'Got correct results'
+    );
+
+    $uri = URI->new($client_base.'/autnums/rir_search/bottom/20000');
+    $res = $ua->get($uri);
+    $tr = ok($res->is_success(),
+        'Autnum bottom fetch completed successfully for 20000');
+    if (not $tr) {
+        warn Dumper($res);
+    }
+
+    $data = decode_json($res->content());
+    @ranges =
+        map { [ $_->{'startAutnum'},
+                $_->{'endAutnum'} ] }
+            @{$data->{'autnumSearchResults'}};
+    is_deeply(
+        \@ranges,
+        [],
+        'Got correct results (empty)'
+    );
+
+    # domain.
+
+    $uri = URI->new($client_base.'/domain/1.1.10.1.in-addr.arpa');
+    $res = $ua->get($uri);
+    $tr = ok($res->is_success(),
+        'Domain fetch completed successfully for 1.1.10.1.in-addr.arpa');
+    if (not $tr) {
+        warn Dumper($res);
+    }
+
+    $data = decode_json($res->content());
+    is($data->{'ldhName'}, '10.1.in-addr.arpa',
+        'Got correct LDH name');
 
     # domain-up.
 
@@ -602,6 +667,20 @@ my $client_pid;
             @{$data->{'links'}};
     ok($has_down_link, 'Object has no down link');
 
+    # domain-top.
+
+    $uri = URI->new($client_base.'/domains/rir_search/top/20.10.1.in-addr.arpa');
+    $res = $ua->get($uri);
+    $tr = ok($res->is_success(),
+        'Domain top fetch completed successfully for 20.10.1.in-addr.arpa');
+    if (not $tr) {
+        warn Dumper($res);
+    }
+
+    $data = decode_json($res->content());
+    is($data->{'ldhName'}, '1.in-addr.arpa',
+        'Got correct LDH name');
+
     # domain-down.
 
     $uri = URI->new($client_base.'/domains/rir_search/down/1.in-addr.arpa');
@@ -639,6 +718,30 @@ my $client_pid;
         \@ranges,
         [qw(10.10.1.in-addr.arpa
             20.10.1.in-addr.arpa)],
+        'Got correct results'
+    );
+
+    # domain-bottom.
+
+    $uri = URI->new($client_base.'/domains/rir_search/bottom/1.in-addr.arpa');
+    $res = $ua->get($uri);
+    $tr = ok($res->is_success(),
+        'Domain bottom fetch completed successfully for 1.in-addr.arpa');
+    if (not $tr) {
+        warn Dumper($res);
+    }
+
+    $data = decode_json($res->content());
+    @ranges =
+        map { $_->{'ldhName'} }
+            @{$data->{'domainSearchResults'}};
+    is_deeply(
+        \@ranges,
+        [qw(1.in-addr.arpa
+            10.1.in-addr.arpa
+            10.10.1.in-addr.arpa
+            20.10.1.in-addr.arpa
+            20.1.in-addr.arpa)],
         'Got correct results'
     );
 

@@ -16,7 +16,7 @@ use APNIC::RDAP::RMP::Client;
 use APNIC::RDAP::RMP::Server;
 use APNIC::RDAP::RMP::Serial qw(new_serial);
 
-use Test::More tests => 86;
+use Test::More tests => 88;
 
 my $pid;
 my $client_pid;
@@ -461,6 +461,37 @@ my $client_pid;
         'Got correct results'
     );
 
+    # ip-bottom where the argument isn't an existing object and isn't
+    # completely covered by more-specifics.
+
+    $uri = URI->new($client_base.'/ips/rir_search/bottom/1.0.0.0/20');
+    $res = $ua->get($uri);
+    $tr = ok($res->is_success(),
+        'IP bottom fetch completed successfully for 1.0.0.0/20');
+    if (not $tr) {
+        warn Dumper($res);
+    }
+
+    $data = decode_json($res->content());
+    @ranges =
+        map { Net::IP::XS->new(
+                $_->{'startAddress'}.'-'.
+                $_->{'endAddress'}
+              )->prefix() }
+        @{$data->{'ipSearchResults'}};
+
+    is_deeply(
+        \@ranges,
+        [qw(1.0.0.0/8
+            1.0.0.0/24
+            1.0.1.0/24
+            1.0.2.0/25
+            1.0.2.64/26
+            1.0.2.128/25
+            1.0.3.0/24)],
+        'Got correct results'
+    );
+
     # ip-bottom where the argument has nothing under it.
 
     $uri = URI->new($client_base.'/ips/rir_search/bottom/1.0.2.65');
@@ -481,7 +512,7 @@ my $client_pid;
 
     is_deeply(
         \@ranges,
-        [qw(1.0.2.64/26)],
+        [],
         'Got correct results'
     );
 

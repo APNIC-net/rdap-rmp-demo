@@ -779,7 +779,7 @@ sub _get_ip_bottom_objects
         }
     }
 
-    if (not $covered_rs->is_empty()) {
+    if (@results and not $covered_rs->is_empty()) {
         my $original_obj = $self->_get_ip_object($ip);
         if ($original_obj) {
             my $str = $original_obj->{'startAddress'}.'-'.

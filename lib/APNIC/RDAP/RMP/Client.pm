@@ -1130,7 +1130,7 @@ sub _get_autnum_bottom_objects
         }
     }
 
-    if (not $covered_rs->is_empty()) {
+    if (@results and not $covered_rs->is_empty()) {
         my $original_obj = $self->_get_autnum_object($start, $end);
         if ($original_obj) {
             my $start  = $original_obj->{'startAutnum'};
@@ -1462,7 +1462,7 @@ sub _get_domain_bottom_objects
         }
     }
 
-    if (not $covered_rs->is_empty()) {
+    if (@results and not $covered_rs->is_empty()) {
         my $original_obj = $self->_get_domain_object($ldh_name);
         if ($original_obj) {
             my $net_ip = $self->_domain_to_net_ip($original_obj);

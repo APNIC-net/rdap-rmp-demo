@@ -12,6 +12,7 @@ use HTTP::Daemon;
 use HTTP::Status qw(:constants);
 use JSON::XS qw(decode_json encode_json);
 use List::Util qw(first);
+use List::MoreUtils qw(uniq);
 use LWP::UserAgent;
 use Net::IP::XS qw($IP_A_IN_B_OVERLAP
                    $IP_NO_OVERLAP);
@@ -569,34 +570,34 @@ sub _annotate_ip
     if ($self->_get_ip_up_object($prefix)) {
         push @{$ip_obj->{'links'}},
              { rel  => 'up',
-               href => $self->{'url_base'}.'/ips/rir_search/up/'.$prefix };
+               href => $self->{'url_base'}.'/ips/rirSearch1/up/'.$prefix };
     }
     if ($self->_get_ip_up_object($prefix, 'active')) {
         push @{$ip_obj->{'links'}},
              { rel  => 'up-active',
-               href => $self->{'url_base'}.'/ips/rir_search/up/'.$prefix.'?status=active' };
+               href => $self->{'url_base'}.'/ips/rirSearch1/up/'.$prefix.'?status=active' };
     }
     if ($self->_get_ip_top_object($prefix)) {
         push @{$ip_obj->{'links'}},
              { rel  => 'top',
-               href => $self->{'url_base'}.'/ips/rir_search/top/'.$prefix };
+               href => $self->{'url_base'}.'/ips/rirSearch1/top/'.$prefix };
     }
     if ($self->_get_ip_top_object($prefix, 'active')) {
         push @{$ip_obj->{'links'}},
              { rel  => 'top-active',
-               href => $self->{'url_base'}.'/ips/rir_search/top/'.$prefix.'?status=active' };
+               href => $self->{'url_base'}.'/ips/rirSearch1/top/'.$prefix.'?status=active' };
     }
     if (my $objs = $self->_get_ip_down_objects($prefix)) {
         if (@{$objs}) {
             push @{$ip_obj->{'links'}},
                  { rel  => 'down',
-                   href => $self->{'url_base'}.'/ips/rir_search/down/'.$prefix };
+                   href => $self->{'url_base'}.'/ips/rirSearch1/down/'.$prefix };
         }
     }
     # To get around the infinite loop that can happen.
     push @{$ip_obj->{'links'}},
             { rel  => 'bottom',
-              href => $self->{'url_base'}.'/ips/rir_search/bottom/'.$prefix };
+              href => $self->{'url_base'}.'/ips/rirSearch1/bottom/'.$prefix };
 
     return 1;
 }
@@ -805,7 +806,7 @@ sub _get_ip_up
     my ($self, $r) = @_;
 
     my $path = $r->uri()->path();
-    my ($ip) = ($path =~ /\/ips\/rir_search\/up\/(.+)/);
+    my ($ip) = ($path =~ /\/ips\/rirSearch1\/up\/(.+)/);
     if (not $ip) {
         return HTTP::Response->new(HTTP_BAD_REQUEST);
     }
@@ -829,7 +830,7 @@ sub _get_ip_top
     warn "IP TOP PATH: ".$r->uri()->path();
 
     my $path = $r->uri()->path();
-    my ($ip) = ($path =~ /\/ips\/rir_search\/top\/(.+)/);
+    my ($ip) = ($path =~ /\/ips\/rirSearch1\/top\/(.+)/);
     if (not $ip) {
         return HTTP::Response->new(HTTP_BAD_REQUEST);
     }
@@ -852,7 +853,7 @@ sub _get_ip_down
     my ($self, $r) = @_;
 
     my $path = $r->uri()->path();
-    my ($ip) = ($path =~ /\/ips\/rir_search\/down\/(.+)/);
+    my ($ip) = ($path =~ /\/ips\/rirSearch1\/down\/(.+)/);
     if (not $ip) {
         return HTTP::Response->new(HTTP_BAD_REQUEST);
     }
@@ -880,7 +881,7 @@ sub _get_ip_bottom
     my ($self, $r) = @_;
 
     my $path = $r->uri()->path();
-    my ($ip) = ($path =~ /\/ips\/rir_search\/bottom\/(.+)/);
+    my ($ip) = ($path =~ /\/ips\/rirSearch1\/bottom\/(.+)/);
     if (not $ip) {
         return HTTP::Response->new(HTTP_BAD_REQUEST);
     }
@@ -1157,7 +1158,7 @@ sub _get_autnum_up
     my ($self, $r) = @_;
 
     my $path = $r->uri()->path();
-    my ($input) = ($path =~ /\/autnums\/rir_search\/up\/(.+)/);
+    my ($input) = ($path =~ /\/autnums\/rirSearch1\/up\/(.+)/);
     if (not $input) {
         return HTTP::Response->new(HTTP_BAD_REQUEST);
     }
@@ -1182,7 +1183,7 @@ sub _get_autnum_top
     my ($self, $r) = @_;
 
     my $path = $r->uri()->path();
-    my ($input) = ($path =~ /\/autnums\/rir_search\/top\/(.+)/);
+    my ($input) = ($path =~ /\/autnums\/rirSearch1\/top\/(.+)/);
     if (not $input) {
         return HTTP::Response->new(HTTP_BAD_REQUEST);
     }
@@ -1207,7 +1208,7 @@ sub _get_autnum_down
     my ($self, $r) = @_;
 
     my $path = $r->uri()->path();
-    my ($input) = ($path =~ /\/autnums\/rir_search\/down\/(.+)/);
+    my ($input) = ($path =~ /\/autnums\/rirSearch1\/down\/(.+)/);
     if (not $input) {
         return HTTP::Response->new(HTTP_BAD_REQUEST);
     }
@@ -1238,7 +1239,7 @@ sub _get_autnum_bottom
     my ($self, $r) = @_;
 
     my $path = $r->uri()->path();
-    my ($input) = ($path =~ /\/autnums\/rir_search\/bottom\/(.+)/);
+    my ($input) = ($path =~ /\/autnums\/rirSearch1\/bottom\/(.+)/);
     if (not $input) {
         return HTTP::Response->new(HTTP_BAD_REQUEST);
     }
@@ -1486,7 +1487,7 @@ sub _get_domain_up
     my ($self, $r) = @_;
 
     my $path = $r->uri()->path();
-    my ($ldh_name) = ($path =~ /\/domains\/rir_search\/up\/(.+)/);
+    my ($ldh_name) = ($path =~ /\/domains\/rirSearch1\/up\/(.+)/);
     if (not $ldh_name) {
         return HTTP::Response->new(HTTP_BAD_REQUEST);
     }
@@ -1507,7 +1508,7 @@ sub _get_domain_top
     my ($self, $r) = @_;
 
     my $path = $r->uri()->path();
-    my ($ldh_name) = ($path =~ /\/domains\/rir_search\/top\/(.+)/);
+    my ($ldh_name) = ($path =~ /\/domains\/rirSearch1\/top\/(.+)/);
     if (not $ldh_name) {
         return HTTP::Response->new(HTTP_BAD_REQUEST);
     }
@@ -1528,7 +1529,7 @@ sub _get_domain_down
     my ($self, $r) = @_;
 
     my $path = $r->uri()->path();
-    my ($ldh_name) = ($path =~ /\/domains\/rir_search\/down\/(.+)/);
+    my ($ldh_name) = ($path =~ /\/domains\/rirSearch1\/down\/(.+)/);
     if (not $ldh_name) {
         return HTTP::Response->new(HTTP_BAD_REQUEST);
     }
@@ -1555,7 +1556,7 @@ sub _get_domain_bottom
     my ($self, $r) = @_;
 
     my $path = $r->uri()->path();
-    my ($ldh_name) = ($path =~ /\/domains\/rir_search\/bottom\/(.+)/);
+    my ($ldh_name) = ($path =~ /\/domains\/rirSearch1\/bottom\/(.+)/);
     if (not $ldh_name) {
         return HTTP::Response->new(HTTP_BAD_REQUEST);
     }
@@ -1824,6 +1825,12 @@ sub _add_defaults
         }
     }
 
+    my @conformance_codes =
+        uniq
+        (@{$data->{'rdapConformance'}},
+         'rirSearch1', 'ips', 'autnums');
+    $data->{'rdapConformance'} = \@conformance_codes;
+
     $res->content(encode_json($data));
     return 1;
 }
@@ -1860,29 +1867,29 @@ sub run
                         $res = $self->_get_nameserver($r);
                     } elsif ($path =~ /^\/.*?\/reverse\//) {
                         $res = $self->_search_reverse($r);
-                    } elsif ($path =~ /\/ips\/rir_search\/up\/.*/) {
+                    } elsif ($path =~ /\/ips\/rirSearch1\/up\/.*/) {
                         $res = $self->_get_ip_up($r);
-                    } elsif ($path =~ /\/ips\/rir_search\/top\/.*/) {
+                    } elsif ($path =~ /\/ips\/rirSearch1\/top\/.*/) {
                         $res = $self->_get_ip_top($r);
-                    } elsif ($path =~ /\/ips\/rir_search\/down\/.*/) {
+                    } elsif ($path =~ /\/ips\/rirSearch1\/down\/.*/) {
                         $res = $self->_get_ip_down($r);
-                    } elsif ($path =~ /\/ips\/rir_search\/bottom\/.*/) {
+                    } elsif ($path =~ /\/ips\/rirSearch1\/bottom\/.*/) {
                         $res = $self->_get_ip_bottom($r);
-                    } elsif ($path =~ /\/autnums\/rir_search\/up\/.*/) {
+                    } elsif ($path =~ /\/autnums\/rirSearch1\/up\/.*/) {
                         $res = $self->_get_autnum_up($r);
-                    } elsif ($path =~ /\/autnums\/rir_search\/down\/.*/) {
+                    } elsif ($path =~ /\/autnums\/rirSearch1\/down\/.*/) {
                         $res = $self->_get_autnum_down($r);
-                    } elsif ($path =~ /\/autnums\/rir_search\/top\/.*/) {
+                    } elsif ($path =~ /\/autnums\/rirSearch1\/top\/.*/) {
                         $res = $self->_get_autnum_top($r);
-                    } elsif ($path =~ /\/autnums\/rir_search\/bottom\/.*/) {
+                    } elsif ($path =~ /\/autnums\/rirSearch1\/bottom\/.*/) {
                         $res = $self->_get_autnum_bottom($r);
-                    } elsif ($path =~ /\/domains\/rir_search\/up\/.*/) {
+                    } elsif ($path =~ /\/domains\/rirSearch1\/up\/.*/) {
                         $res = $self->_get_domain_up($r);
-                    } elsif ($path =~ /\/domains\/rir_search\/down\/.*/) {
+                    } elsif ($path =~ /\/domains\/rirSearch1\/down\/.*/) {
                         $res = $self->_get_domain_down($r);
-                    } elsif ($path =~ /\/domains\/rir_search\/top\/.*/) {
+                    } elsif ($path =~ /\/domains\/rirSearch1\/top\/.*/) {
                         $res = $self->_get_domain_top($r);
-                    } elsif ($path =~ /\/domains\/rir_search\/bottom\/.*/) {
+                    } elsif ($path =~ /\/domains\/rirSearch1\/bottom\/.*/) {
                         $res = $self->_get_domain_bottom($r);
                     } elsif ($path =~ /\/ips/) {
                         $res = $self->_get_ips($r);

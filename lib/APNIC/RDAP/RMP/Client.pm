@@ -1828,7 +1828,8 @@ sub _add_defaults
     my @conformance_codes =
         uniq
         (@{$data->{'rdapConformance'}},
-         'rirSearch1', 'ips', 'autnums');
+         'rirSearch1', 'ips', 'autnums',
+         'ipSearchResults', 'autnumSearchResults');
     $data->{'rdapConformance'} = \@conformance_codes;
 
     $res->content(encode_json($data));

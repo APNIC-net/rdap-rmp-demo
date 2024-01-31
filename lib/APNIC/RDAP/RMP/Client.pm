@@ -599,6 +599,8 @@ sub _annotate_ip
             { rel  => 'bottom',
               href => $self->{'url_base'}.'/ips/rirSearch1/bottom/'.$prefix };
 
+    push @{$ip_obj->{'rdapConformance'}}, ('rirSearch1', 'ips');
+
     return 1;
 }
 
@@ -862,7 +864,7 @@ sub _get_ip_down
     my $objs = $self->_get_ip_down_objects($ip, $status);
 
     my $response_data = encode_json({
-        rdapConformance => ["rdap_level_0"],
+        rdapConformance => ["rdap_level_0", "rirSearch1", "ips", "ipSearchResults"],
         'ipSearchResults' => [
             map { my $obj = clone($_);
                   delete $obj->{'rdapConformance'};
@@ -890,7 +892,7 @@ sub _get_ip_bottom
     my $objs = $self->_get_ip_bottom_objects($ip, $status);
 
     my $response_data = encode_json({
-        rdapConformance => ["rdap_level_0"],
+        rdapConformance => ["rdap_level_0", "rirSearch1", "ips", "ipSearchResults"],
         'ipSearchResults' => [
             map { my $obj = clone($_);
                   delete $obj->{'rdapConformance'};
@@ -930,7 +932,7 @@ sub _get_ips
     }
 
     my $response_data = encode_json({
-        rdapConformance => ["rdap_level_0"],
+        rdapConformance => ["rdap_level_0", "rirSearch1", "ips", "ipSearchResults"],
         'ipSearchResults' => [
             map { my $obj = clone($_);
                   delete $obj->{'rdapConformance'};
@@ -964,6 +966,8 @@ sub _annotate_autnum
                    href => $self->{'url_base'}.'/autnum-down/'.$key };
         }
     }
+
+    push @{$autnum_obj->{'rdapConformance'}}, ('rirSearch1', 'autnums');
 
     return 1;
 }
@@ -1220,7 +1224,7 @@ sub _get_autnum_down
     my $objs = $self->_get_autnum_down_objects($start, $end);
 
     my $response_data = encode_json({
-        rdapConformance => ["rdap_level_0"],
+        rdapConformance => ["rdap_level_0", "rirSearch1", "autnums", "autnumSearchResults"],
         'autnumSearchResults' => [
             map { my $obj = clone($_);
                   delete $obj->{'rdapConformance'};
@@ -1251,7 +1255,7 @@ sub _get_autnum_bottom
     my $objs = $self->_get_autnum_bottom_objects($start, $end);
 
     my $response_data = encode_json({
-        rdapConformance => ["rdap_level_0"],
+        rdapConformance => ["rdap_level_0", "rirSearch1", "autnums", "autnumSearchResults"],
         'autnumSearchResults' => [
             map { my $obj = clone($_);
                   delete $obj->{'rdapConformance'};
@@ -1291,7 +1295,7 @@ sub _get_autnums
     }
 
     my $response_data = encode_json({
-        rdapConformance => ["rdap_level_0"],
+        rdapConformance => ["rdap_level_0", "rirSearch1", "autnums", "autnumSearchResults"],
         'autnumSearchResults' => [
             map { my $obj = clone($_);
                   delete $obj->{'rdapConformance'};
@@ -1537,7 +1541,7 @@ sub _get_domain_down
     my $objs = $self->_get_domain_down_objects($ldh_name);
 
     my $response_data = encode_json({
-        rdapConformance => ["rdap_level_0"],
+        rdapConformance => ["rdap_level_0", "rirSearch1"],
         'domainSearchResults' => [
             map { my $obj = clone($_);
                   delete $obj->{'rdapConformance'};
@@ -1564,7 +1568,7 @@ sub _get_domain_bottom
     my $objs = $self->_get_domain_bottom_objects($ldh_name);
 
     my $response_data = encode_json({
-        rdapConformance => ["rdap_level_0"],
+        rdapConformance => ["rdap_level_0", "rirSearch1"],
         'domainSearchResults' => [
             map { my $obj = clone($_);
                   delete $obj->{'rdapConformance'};
@@ -1825,12 +1829,8 @@ sub _add_defaults
         }
     }
 
-    my @conformance_codes =
-        uniq
-        (@{$data->{'rdapConformance'}},
-         'rirSearch1', 'ips', 'autnums',
-         'ipSearchResults', 'autnumSearchResults');
-    $data->{'rdapConformance'} = \@conformance_codes;
+    $data->{'rdapConformance'} =
+        [ uniq @{$data->{'rdapConformance'}} ];
 
     $res->content(encode_json($data));
     return 1;

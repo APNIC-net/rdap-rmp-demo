@@ -258,8 +258,7 @@ my $client_pid;
     my @conformance_codes =
         sort @{$data->{'rdapConformance'}};
     is_deeply(\@conformance_codes,
-              [qw(autnums
-                  ips
+              [qw(ips
                   rdap_level_0
                   rirSearch1)],
               'Got correct set of conformance codes');

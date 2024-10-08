@@ -11,6 +11,8 @@ use HTTP::Daemon;
 use HTTP::Status qw(:constants);
 use JSON::XS qw(decode_json encode_json);
 use List::Util qw(first);
+use POSIX qw(strftime);
+use UUID qw(uuid);
 
 use APNIC::RDAP::RMP::Serial qw(new_serial);
 
@@ -44,6 +46,7 @@ sub new
 
     bless $self, $class;
     $self->_load_db();
+    $self->_generate_version_id();
     return $self;
 }
 
@@ -60,6 +63,40 @@ sub _load_db
     $self->{'db'} = $json->decode(read_file($self->{'db_path'}));
     if (not keys %{$self->{'db'}}) {
         $self->{'db'}->{'serial'} = new_serial(32, 0);
+    }
+
+    return 1;
+}
+
+sub _generate_version_id
+{
+    my ($self) = @_;
+
+    my $object_path = $self->{'object_path'};
+    my $db_digest   = $self->{'db_digest'} || '';
+
+    my @digest_inputs;
+    find(sub {
+        my $path = $File::Find::name;
+        if (-d $path) {
+            return;
+        }
+
+        my $content = read_file($path);
+        my $digest = md5_hex($content);
+        push @digest_inputs, "$path/$digest";
+    }, $object_path);
+
+    my $digest_input = join ',', sort @digest_inputs;
+    my $new_digest   = md5_hex($digest_input);
+
+    if ($db_digest ne $new_digest) {
+        $self->{'version_id'} = uuid();
+        $self->{'db_digest'}  = $new_digest;
+        $self->{'production_date'} = strftime('%FT%TZ', gmtime(time()));
+        print STDERR "New version ID: ".$self->{'version_id'}."\n";
+    } else {
+        print STDERR "No new version ID required\n";
     }
 
     return 1;
@@ -311,6 +348,73 @@ sub _delta_generate
     return HTTP::Response->new(HTTP_OK);
 }
 
+my %acceptable_object_classes = map { $_ => 1 }
+    ('ip network',
+     'domain',
+     'entity',
+     'nameserver',
+     'autnum');
+
+sub _bulk_generate
+{
+    my ($self, $r) = @_;
+
+    $self->_generate_version_id();
+    my $uri = $r->uri();
+    my %qf = $uri->query_form();
+    my $object_class = $qf{'objectClass'};
+    if ($object_class
+            and not exists $acceptable_object_classes{$object_class}) {
+        return HTTP::Response->new(HTTP_BAD_REQUEST);
+    }
+
+    my $object_path = $self->{'object_path'};
+    my @objects;
+    find(sub {
+        my $path = $File::Find::name;
+        if (-d $path) {
+            return;
+        }
+
+        my $content = read_file($path);
+        my $data = decode_json($content);
+        my $id = _get_self_link($path, $data);
+        if (not $object_class
+                or ($data->{'objectClassName'} eq $object_class)) {
+            push @objects, [$id, $data, $content];
+        }
+    }, $object_path);
+
+    @objects = sort { $a->{'id'} cmp $b->{'id'} } @objects;
+
+    my %rdap_conformance_codes = (
+        rdap_level_0 => 1,
+        nroBulkRdap1 => 1,
+    );
+    for my $object (@objects) {
+        my $data = $object->[1];
+        for my $rcc (@{$data->{'rdapConformance'} || []}) {
+            $rdap_conformance_codes{$rcc} = 1;
+        }
+    }
+
+    my %metadata = (
+        rdapConformance => [sort keys %rdap_conformance_codes],
+        versionId       => $self->{'version_id'},
+        producer        => 'APNIC',
+        productionDate  => $self->{'production_date'},
+        objectCount     => scalar @objects
+    );
+    
+    my $content =
+        chr(0x1E).encode_json(\%metadata).chr(0x0A).
+        (join '', (map { chr(0x1E).$_->[2].chr(0x0A) } @objects));
+    
+    return HTTP::Response->new(HTTP_OK, undef,
+                               ['Content-Type', 'application/json-seq'],
+                               $content);
+}
+
 sub run
 {
     my ($self) = @_;
@@ -318,8 +422,12 @@ sub run
     my $d = $self->{"d"};
     while (my $c = $d->accept()) {
         while (my $r = $c->get_request()) {
-            my $method = $r->method();
-            my $path = $r->uri()->path();
+            my $method   = $r->method();
+            my $uri      = $r->uri();
+            my $path     = $uri->path();
+            my $uri_str  = $uri->as_string();
+            my $time_str = strftime('%F %T', localtime(time()));
+            print STDERR "[$time_str] $method $uri_str\n";
             my $res;
             eval {
                 if ($method eq 'POST') {
@@ -334,13 +442,16 @@ sub run
                         goto done;
                     }
                 } elsif ($method eq 'GET') {
-                    if ($path !~ /^\/(unf|snapshot|delta)\//) {
+                    if ($path =~ /^\/nroBulkRdap1/) {
+                        $res = $self->_bulk_generate($r);
+                    } elsif ($path !~ /^\/(unf|snapshot|delta)\//) {
                         return HTTP::Response->new(HTTP_NOT_FOUND);
+                    } else {
+                        my $data_path = $self->{'data_path'};
+                        my $request_path = $data_path.$path;
+                        $res = HTTP::Response->new(HTTP_OK, undef,
+                                                   [], read_file($request_path));
                     }
-                    my $data_path = $self->{'data_path'};
-                    my $request_path = $data_path.$path;
-                    $res = HTTP::Response->new(HTTP_OK, undef,
-                                               [], read_file($request_path));
                 }
             };
             if (my $error = $@) {

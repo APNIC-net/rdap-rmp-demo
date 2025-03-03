@@ -246,7 +246,7 @@ my $client_pid;
 
     # ip-up.
 
-    my $uri = URI->new($client_base.'/ips/rirSearch1/up/1.0.0.0/24');
+    my $uri = URI->new($client_base.'/ips/rirSearch1/rdap-up/1.0.0.0/24');
     $res = $ua->get($uri);
     my $tr = ok($res->is_success(),
         'IP up fetch completed successfully for 1.0.0.0/24');
@@ -267,15 +267,15 @@ my $client_pid;
     is($data->{'endAddress'}, '1.255.255.255',
         'Got correct end address');
     my $has_up_link =
-        first { $_->{'rel'} eq 'up' }
+        first { $_->{'rel'} eq 'rdap-up' }
             @{$data->{'links'}};
     ok((not $has_up_link), 'Object has no up link');
     my $has_down_link =
-        first { $_->{'rel'} eq 'down' }
+        first { $_->{'rel'} eq 'rdap-down' }
             @{$data->{'links'}};
     ok($has_down_link, 'Object has down link');
 
-    $uri = URI->new($client_base.'/ips/rirSearch1/up/1.0.2.128/25');
+    $uri = URI->new($client_base.'/ips/rirSearch1/rdap-up/1.0.2.128/25');
     $res = $ua->get($uri);
     $tr = ok($res->is_success(),
         'IP up fetch completed successfully for 1.0.2.128/25');
@@ -289,17 +289,17 @@ my $client_pid;
     is($data->{'endAddress'}, '1.0.2.255',
         'Got correct end address');
     $has_up_link =
-        first { $_->{'rel'} eq 'up' }
+        first { $_->{'rel'} eq 'rdap-up' }
             @{$data->{'links'}};
     ok($has_up_link, 'Object has up link');
     $has_down_link =
-        first { $_->{'rel'} eq 'down' }
+        first { $_->{'rel'} eq 'rdap-down' }
             @{$data->{'links'}};
     ok($has_down_link, 'Object has down link');
 
     # ip-top.
 
-    $uri = URI->new($client_base.'/ips/rirSearch1/top/1.0.64.0/26');
+    $uri = URI->new($client_base.'/ips/rirSearch1/rdap-top/1.0.64.0/26');
     $res = $ua->get($uri);
     $tr = ok($res->is_success(),
         'IP top fetch completed successfully for 1.0.64.0/26');
@@ -315,7 +315,7 @@ my $client_pid;
 
     # ip-top with status.
 
-    $uri = URI->new($client_base.'/ips/rirSearch1/top/1.0.2.64/26'.
+    $uri = URI->new($client_base.'/ips/rirSearch1/rdap-top/1.0.2.64/26'.
                                  '?status=active');
     $res = $ua->get($uri);
     $tr = ok($res->is_success(),
@@ -332,7 +332,7 @@ my $client_pid;
 
     # ip-down.
 
-    $uri = URI->new($client_base.'/ips/rirSearch1/down/1.0.0.0/8');
+    $uri = URI->new($client_base.'/ips/rirSearch1/rdap-down/1.0.0.0/8');
     $res = $ua->get($uri);
     $tr = ok($res->is_success(),
         'IP down fetch completed successfully for 1.0.0.0/8');
@@ -356,7 +356,7 @@ my $client_pid;
         'Got correct results'
     );
 
-    $uri = URI->new($client_base.'/ips/rirSearch1/down/1.0.2.0/24');
+    $uri = URI->new($client_base.'/ips/rirSearch1/rdap-down/1.0.2.0/24');
     $res = $ua->get($uri);
     $tr = ok($res->is_success(),
         'IP down fetch completed successfully for 1.0.2.0/24');
@@ -380,7 +380,7 @@ my $client_pid;
 
     # ip-bottom.
 
-    $uri = URI->new($client_base.'/ips/rirSearch1/bottom/1.0.0.0/8');
+    $uri = URI->new($client_base.'/ips/rirSearch1/rdap-bottom/1.0.0.0/8');
     $res = $ua->get($uri);
     $tr = ok($res->is_success(),
         'IP bottom fetch completed successfully for 1.0.0.0/8');
@@ -412,7 +412,7 @@ my $client_pid;
 
     $uri =
         URI->new($client_base.
-                 '/ips/rirSearch1/bottom/1.0.0.0/8?status=active');
+                 '/ips/rirSearch1/rdap-bottom/1.0.0.0/8?status=active');
     $res = $ua->get($uri);
     $tr = ok($res->is_success(),
         'IP bottom fetch completed successfully for 1.0.0.0/8');
@@ -441,7 +441,7 @@ my $client_pid;
 
     # ip-bottom where the argument isn't an existing object.
 
-    $uri = URI->new($client_base.'/ips/rirSearch1/bottom/1.0.0.0/22');
+    $uri = URI->new($client_base.'/ips/rirSearch1/rdap-bottom/1.0.0.0/22');
     $res = $ua->get($uri);
     $tr = ok($res->is_success(),
         'IP bottom fetch completed successfully for 1.0.0.0/22');
@@ -471,7 +471,7 @@ my $client_pid;
     # ip-bottom where the argument isn't an existing object and isn't
     # completely covered by more-specifics.
 
-    $uri = URI->new($client_base.'/ips/rirSearch1/bottom/1.0.0.0/20');
+    $uri = URI->new($client_base.'/ips/rirSearch1/rdap-bottom/1.0.0.0/20');
     $res = $ua->get($uri);
     $tr = ok($res->is_success(),
         'IP bottom fetch completed successfully for 1.0.0.0/20');
@@ -501,7 +501,7 @@ my $client_pid;
 
     # ip-bottom where the argument has nothing under it.
 
-    $uri = URI->new($client_base.'/ips/rirSearch1/bottom/1.0.2.65');
+    $uri = URI->new($client_base.'/ips/rirSearch1/rdap-bottom/1.0.2.65');
     $res = $ua->get($uri);
     $tr = ok($res->is_success(),
         'IP bottom fetch completed successfully for 1.0.2.65');
@@ -555,18 +555,18 @@ my $client_pid;
         }
     }
     is_deeply(\%processed,
-              { 'up'         => '1.0.2.0-1.0.2.255',
-                'top'        => '1.0.0.0-1.255.255.255',
-                'up-active'  => '1.0.2.0-1.0.2.255',
-                'top-active' => '1.0.2.0-1.0.2.255',
-                'down'       => [ '1.0.2.64-1.0.2.127' ],
-                'bottom'     => [ '1.0.2.0-1.0.2.127',
-                                  '1.0.2.64-1.0.2.127' ] },
+              { 'rdap-up'         => '1.0.2.0-1.0.2.255',
+                'rdap-top'        => '1.0.0.0-1.255.255.255',
+                'rdap-up-active'  => '1.0.2.0-1.0.2.255',
+                'rdap-top-active' => '1.0.2.0-1.0.2.255',
+                'rdap-down'       => [ '1.0.2.64-1.0.2.127' ],
+                'rdap-bottom'     => [ '1.0.2.0-1.0.2.127',
+                                       '1.0.2.64-1.0.2.127' ] },
               'Got complete set of links');
 
     # autnum-up.
 
-    $uri = URI->new($client_base.'/autnums/rirSearch1/up/10-10');
+    $uri = URI->new($client_base.'/autnums/rirSearch1/rdap-up/10-10');
     $res = $ua->get($uri);
     $tr = ok($res->is_success(),
         'Autnum up fetch completed successfully for 10');
@@ -580,15 +580,15 @@ my $client_pid;
     is($data->{'endAutnum'}, '15',
         'Got correct end autnum');
     $has_up_link =
-        first { $_->{'rel'} eq 'up' }
+        first { $_->{'rel'} eq 'rdap-up' }
             @{$data->{'links'}};
     ok($has_up_link, 'Object has up link');
     $has_down_link =
-        first { $_->{'rel'} eq 'down' }
+        first { $_->{'rel'} eq 'rdap-down' }
             @{$data->{'links'}};
     ok($has_down_link, 'Object has down link');
 
-    $uri = URI->new($client_base.'/autnums/rirSearch1/up/19-19');
+    $uri = URI->new($client_base.'/autnums/rirSearch1/rdap-up/19-19');
     $res = $ua->get($uri);
     $tr = ok($res->is_success(),
         'Autnum up fetch completed successfully for 19');
@@ -602,17 +602,17 @@ my $client_pid;
     is($data->{'endAutnum'}, '19',
         'Got correct end autnum');
     $has_up_link =
-        first { $_->{'rel'} eq 'up' }
+        first { $_->{'rel'} eq 'rdap-up' }
             @{$data->{'links'}};
     ok($has_up_link, 'Object has up link');
     $has_down_link =
-        first { $_->{'rel'} eq 'down' }
+        first { $_->{'rel'} eq 'rdap-down' }
             @{$data->{'links'}};
     ok($has_down_link, 'Object has down link');
 
     # autnum-top.
 
-    $uri = URI->new($client_base.'/autnums/rirSearch1/top/18');
+    $uri = URI->new($client_base.'/autnums/rirSearch1/rdap-top/18');
     $res = $ua->get($uri);
     $tr = ok($res->is_success(),
         'Autnum top fetch completed successfully for 18');
@@ -628,7 +628,7 @@ my $client_pid;
 
     # autnum-down.
 
-    $uri = URI->new($client_base.'/autnums/rirSearch1/down/10-19');
+    $uri = URI->new($client_base.'/autnums/rirSearch1/rdap-down/10-19');
     $res = $ua->get($uri);
     $tr = ok($res->is_success(),
         'Autnum down fetch completed successfully for 10-19');
@@ -648,7 +648,7 @@ my $client_pid;
         'Got correct results'
     );
 
-    $uri = URI->new($client_base.'/autnums/rirSearch1/down/16-19');
+    $uri = URI->new($client_base.'/autnums/rirSearch1/rdap-down/16-19');
     $res = $ua->get($uri);
     $tr = ok($res->is_success(),
         'Autnum down fetch completed successfully for 16-19');
@@ -670,7 +670,7 @@ my $client_pid;
 
     # autnum-bottom.
 
-    $uri = URI->new($client_base.'/autnums/rirSearch1/bottom/10-19');
+    $uri = URI->new($client_base.'/autnums/rirSearch1/rdap-bottom/10-19');
     $res = $ua->get($uri);
     $tr = ok($res->is_success(),
         'Autnum bottom fetch completed successfully for 10-19');
@@ -694,7 +694,7 @@ my $client_pid;
         'Got correct results'
     );
 
-    $uri = URI->new($client_base.'/autnums/rirSearch1/bottom/1-1000');
+    $uri = URI->new($client_base.'/autnums/rirSearch1/rdap-bottom/1-1000');
     $res = $ua->get($uri);
     $tr = ok($res->is_success(),
         'Autnum bottom fetch completed successfully for 1-1000');
@@ -722,7 +722,7 @@ my $client_pid;
         'Got correct results'
     );
 
-    $uri = URI->new($client_base.'/autnums/rirSearch1/bottom/20000');
+    $uri = URI->new($client_base.'/autnums/rirSearch1/rdap-bottom/20000');
     $res = $ua->get($uri);
     $tr = ok($res->is_success(),
         'Autnum bottom fetch completed successfully for 20000');
@@ -757,7 +757,7 @@ my $client_pid;
 
     # domain-up.
 
-    $uri = URI->new($client_base.'/domains/rirSearch1/up/10.1.in-addr.arpa');
+    $uri = URI->new($client_base.'/domains/rirSearch1/rdap-up/10.1.in-addr.arpa');
     $res = $ua->get($uri);
     $tr = ok($res->is_success(),
         'Domain up fetch completed successfully for 10.1.in-addr.arpa');
@@ -769,15 +769,15 @@ my $client_pid;
     is($data->{'ldhName'}, '1.in-addr.arpa',
         'Got correct LDH name');
     $has_up_link =
-        first { $_->{'rel'} eq 'up' }
+        first { $_->{'rel'} eq 'rdap-up' }
             @{$data->{'links'}};
     ok((not $has_up_link), 'Object has no up link');
     $has_down_link =
-        first { $_->{'rel'} eq 'down' }
+        first { $_->{'rel'} eq 'rdap-down' }
             @{$data->{'links'}};
     ok($has_down_link, 'Object has down link');
 
-    $uri = URI->new($client_base.'/domains/rirSearch1/up/20.10.1.in-addr.arpa');
+    $uri = URI->new($client_base.'/domains/rirSearch1/rdap-up/20.10.1.in-addr.arpa');
     $res = $ua->get($uri);
     $tr = ok($res->is_success(),
         'Domain up fetch completed successfully for 20.10.1.in-addr.arpa');
@@ -789,17 +789,17 @@ my $client_pid;
     is($data->{'ldhName'}, '10.1.in-addr.arpa',
         'Got correct LDH name');
     $has_up_link =
-        first { $_->{'rel'} eq 'up' }
+        first { $_->{'rel'} eq 'rdap-up' }
             @{$data->{'links'}};
     ok($has_up_link, 'Object has up link');
     $has_down_link =
-        first { $_->{'rel'} eq 'down' }
+        first { $_->{'rel'} eq 'rdap-down' }
             @{$data->{'links'}};
     ok($has_down_link, 'Object has no down link');
 
     # domain-top.
 
-    $uri = URI->new($client_base.'/domains/rirSearch1/top/20.10.1.in-addr.arpa');
+    $uri = URI->new($client_base.'/domains/rirSearch1/rdap-top/20.10.1.in-addr.arpa');
     $res = $ua->get($uri);
     $tr = ok($res->is_success(),
         'Domain top fetch completed successfully for 20.10.1.in-addr.arpa');
@@ -813,7 +813,7 @@ my $client_pid;
 
     # domain-down.
 
-    $uri = URI->new($client_base.'/domains/rirSearch1/down/1.in-addr.arpa');
+    $uri = URI->new($client_base.'/domains/rirSearch1/rdap-down/1.in-addr.arpa');
     $res = $ua->get($uri);
     $tr = ok($res->is_success(),
         'Domain down fetch completed successfully for 1.in-addr.arpa');
@@ -832,7 +832,7 @@ my $client_pid;
         'Got correct results'
     );
 
-    $uri = URI->new($client_base.'/domains/rirSearch1/down/10.1.in-addr.arpa');
+    $uri = URI->new($client_base.'/domains/rirSearch1/rdap-down/10.1.in-addr.arpa');
     $res = $ua->get($uri);
     $tr = ok($res->is_success(),
         'Domain down fetch completed successfully for 10.1.in-addr.arpa');
@@ -853,7 +853,7 @@ my $client_pid;
 
     # domain-bottom.
 
-    $uri = URI->new($client_base.'/domains/rirSearch1/bottom/1.in-addr.arpa');
+    $uri = URI->new($client_base.'/domains/rirSearch1/rdap-bottom/1.in-addr.arpa');
     $res = $ua->get($uri);
     $tr = ok($res->is_success(),
         'Domain bottom fetch completed successfully for 1.in-addr.arpa');

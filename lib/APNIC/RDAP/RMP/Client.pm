@@ -574,7 +574,7 @@ sub _annotate_ip
     }
     if ($self->_get_ip_up_object($prefix, 'active')) {
         push @{$ip_obj->{'links'}},
-             { rel  => 'rdap-up-active',
+             { rel  => 'rdap-up rdap-active',
                href => $self->{'url_base'}.'/ips/rirSearch1/rdap-up/'.$prefix.'?status=active' };
     }
     if ($self->_get_ip_top_object($prefix)) {
@@ -584,7 +584,7 @@ sub _annotate_ip
     }
     if ($self->_get_ip_top_object($prefix, 'active')) {
         push @{$ip_obj->{'links'}},
-             { rel  => 'rdap-top-active',
+             { rel  => 'rdap-top rdap-active',
                href => $self->{'url_base'}.'/ips/rirSearch1/rdap-top/'.$prefix.'?status=active' };
     }
     if (my $objs = $self->_get_ip_down_objects($prefix)) {
